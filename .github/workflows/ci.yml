@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip pytest
+          python -m pip install --upgrade pip pytest edge-tts
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-dejavu-core
 
@@ -31,7 +31,10 @@ jobs:
       - name: Run deterministic demo
         run: python -m src.main --demo > production-package.json
 
-      - name: Render first vertical MP4 technical preview
+      - name: Generate Arabic neural voice
+        run: python scripts/generate_voice.py
+
+      - name: Render first vertical MP4 with voice
         run: bash scripts/render_preview.sh
 
       - name: Upload production package
@@ -40,8 +43,14 @@ jobs:
           name: production-package
           path: production-package.json
 
-      - name: Upload technical preview video
+      - name: Upload publish preview video
         uses: actions/upload-artifact@v4
         with:
-          name: netflix-blockbuster-tech-preview
-          path: output/001-netflix-blockbuster-tech-preview.mp4
+          name: netflix-blockbuster-publish-preview
+          path: output/001-netflix-blockbuster-preview.mp4
+
+      - name: Upload generated voice
+        uses: actions/upload-artifact@v4
+        with:
+          name: netflix-blockbuster-arabic-voice
+          path: output/001-netflix-blockbuster-voice.mp3
