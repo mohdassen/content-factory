@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "language": "ar",
+  "primary_platform": "youtube_shorts",
+  "distribution": ["youtube_shorts", "tiktok", "instagram_reels", "facebook_reels"],
+  "daily_target": 3,
+  "content_pillars": [
+    "money_stories",
+    "business_secrets",
+    "ai_future",
+    "rise_and_fall",
+    "saudi_gulf_opportunity"
+  ],
+  "approval_threshold": 70,
+  "video": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "short_target_seconds": 55,
+    "long_short_target_seconds": 75
+  },
+  "quality_gates": {
+    "research_required": true,
+    "minimum_sources": 2,
+    "reject_unverified_numbers": true,
+    "reject_repetitive_template": true,
+    "require_original_narrative": true
+  }
+}
