@@ -1,0 +1,14 @@
+{
+  "format":"9:16",
+  "style":"premium cinematic technology documentary, 1970s-to-modern visual evolution",
+  "shots":[
+    {"start":0,"end":4,"prompt":"35mm film strip morphing into digital pixels and smartphone camera sensor, dramatic macro cinematography, vertical","motion":"rapid macro push"},
+    {"start":4,"end":11,"prompt":"1975 electronics engineering laboratory, young engineer testing bulky experimental electronic camera, historically inspired, cinematic documentary","motion":"slow handheld drift"},
+    {"start":11,"end":18,"prompt":"vintage cassette recorder connected to experimental imaging electronics, monochrome portrait emerging slowly on old display","motion":"rack focus"},
+    {"start":18,"end":25,"prompt":"newspaper-style myth headline fragments revealing a long timeline of digital camera development","motion":"paper tear transition"},
+    {"start":25,"end":36,"prompt":"tower of film canisters, photo processing machines and printed photographs turning into stacks of cash, digital camera glowing in background","motion":"parallax push"},
+    {"start":36,"end":47,"prompt":"rapid evolution from compact digital cameras to smartphones while traditional film store shelves disappear","motion":"match-cut montage"},
+    {"start":47,"end":53,"prompt":"empty legacy photography retail environment, legal filing papers on desk, subdued cinematic light","motion":"slow pullback"},
+    {"start":53,"end":58,"prompt":"business executive silhouette facing bright digital future while profitable legacy products form chains behind, sophisticated visual metaphor","motion":"push toward light"}
+  ]
+}
