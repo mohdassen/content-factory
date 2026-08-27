@@ -1,0 +1,62 @@
+name: Content Factory Batch 001
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'content/**'
+      - 'scripts/generate_voice_item.py'
+      - '.github/workflows/batch.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip pytest
+      - run: pytest -q
+
+  voice-batch:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        item:
+          - { id: '001', slug: '001-netflix-blockbuster' }
+          - { id: '002', slug: '002-kodak-digital-camera' }
+          - { id: '003', slug: '003-costco-membership' }
+          - { id: '004', slug: '004-nvidia-cuda' }
+          - { id: '005', slug: '005-google-glass' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install voice engine
+        run: python -m pip install --upgrade pip edge-tts
+      - name: Generate Arabic narration
+        run: python scripts/generate_voice_item.py --id "${{ matrix.item.id }}"
+      - name: Upload narration
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.item.slug }}-voice
+          path: output/${{ matrix.item.slug }}-voice.mp3
+          if-no-files-found: error
+
+  batch-complete:
+    if: ${{ always() }}
+    needs: [validate, voice-batch]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report batch state
+        run: |
+          echo "validate=${{ needs.validate.result }}"
+          echo "voice-batch=${{ needs.voice-batch.result }}"
+          test "${{ needs.validate.result }}" = "success"
+          test "${{ needs.voice-batch.result }}" = "success"
