@@ -6,9 +6,7 @@ on:
     branches: [main]
     paths:
       - 'content/**'
-      - 'scripts/generate_voice_item.py'
-      - 'scripts/render_item.py'
-      - 'scripts/qc_video.py'
+      - 'scripts/**'
       - '.github/workflows/batch.yml'
 
 jobs:
@@ -47,6 +45,10 @@ jobs:
           sudo apt-get install -y ffmpeg fonts-dejavu-core jq
       - name: Generate Arabic narration
         run: python scripts/generate_voice_item.py --id "${{ matrix.item.id }}"
+      - name: Fetch cinematic scene visuals
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: python scripts/fetch_visuals.py --id "${{ matrix.item.id }}"
       - name: Render vertical MP4
         run: python scripts/render_item.py --id "${{ matrix.item.id }}"
       - name: Run technical quality gate
@@ -73,32 +75,21 @@ jobs:
             -F "supports_streaming=true" \
             -F "caption=🎬 Content Factory | ${{ matrix.item.id }}\n✅ QC: PASS\n⏱ ${DURATION}s\n${{ matrix.item.slug }}" >/dev/null
           echo "Telegram delivery successful for ${{ matrix.item.slug }}"
-      - name: Upload narration
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.item.slug }}-voice
-          path: output/${{ matrix.item.slug }}-voice.mp3
-          if-no-files-found: error
-      - name: Upload video preview
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.item.slug }}-preview
           path: output/${{ matrix.item.slug }}-preview.mp4
-          if-no-files-found: error
-      - name: Upload QC report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.item.slug }}-qc
           path: output/${{ matrix.item.id }}-qc.json
-          if-no-files-found: error
 
   batch-complete:
     if: ${{ always() }}
     needs: [validate, render-batch]
     runs-on: ubuntu-latest
     steps:
-      - name: Report batch state
-        run: |
+      - run: |
           echo "validate=${{ needs.validate.result }}"
           echo "render-batch=${{ needs.render-batch.result }}"
           test "${{ needs.validate.result }}" = "success"
