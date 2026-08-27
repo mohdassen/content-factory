@@ -1,0 +1,14 @@
+{
+  "target_duration": 58,
+  "language": "ar-SA",
+  "scenes": [
+    {"start":0,"end":4,"beat":"hook","visual":"iconic film-era photography world transforms into digital pixels","caption":"تخترع المستقبل… ثم تخسر أمامه؟"},
+    {"start":4,"end":11,"beat":"invention","visual":"1970s engineering lab, bulky experimental digital camera prototype","caption":"Kodak • 1975"},
+    {"start":11,"end":18,"beat":"primitive-tech","visual":"cassette tape and monochrome image slowly appearing on old display","caption":"23 ثانية لصورة واحدة"},
+    {"start":18,"end":25,"beat":"myth-break","visual":"viral headline shatters into nuanced timeline of Kodak digital products","caption":"القصة ليست: اخترعتها ثم أخفتها"},
+    {"start":25,"end":36,"beat":"business-model","visual":"film rolls, processing labs and photo prints generating cash while digital camera grows beside them","caption":"المشكلة كانت نموذج العمل"},
+    {"start":36,"end":47,"beat":"market-shift","visual":"film shelves fade while phones and digital cameras multiply","caption":"السوق تغيّر أسرع"},
+    {"start":47,"end":53,"beat":"collapse","visual":"Kodak-era storefront imagery fading into bankruptcy filing motif","caption":"2012 • Chapter 11"},
+    {"start":53,"end":58,"beat":"lesson","visual":"bright future doorway behind a pile of profitable legacy products","caption":"أحيانًا الماضي المربح يؤخر المستقبل"}
+  ]
+}
