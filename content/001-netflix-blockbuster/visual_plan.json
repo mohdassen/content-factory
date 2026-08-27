@@ -1,0 +1,21 @@
+{
+  "format": "9:16",
+  "style": "cinematic business documentary, premium, fast-paced, no slideshow feel",
+  "shots": [
+    {"start":0,"end":5,"prompt":"late 1990s video rental store exterior at night, glowing signage, customers entering, cinematic documentary, vertical composition","motion":"fast push-in","purpose":"hook"},
+    {"start":5,"end":11,"prompt":"small early internet startup office around year 2000, DVD envelopes, computers, founders working under pressure, cinematic","motion":"handheld slow drift","purpose":"contrast"},
+    {"start":11,"end":18,"prompt":"corporate boardroom meeting in 2000, startup founders pitching to executives, tense business negotiation, cinematic reenactment","motion":"slow orbit","purpose":"offer"},
+    {"start":18,"end":23,"prompt":"executive dismissing a proposal across conference table, restrained expressions, premium documentary reenactment","motion":"snap zoom then hold","purpose":"rejection"},
+    {"start":23,"end":31,"prompt":"dot com market crash visual metaphor, falling technology stock charts reflected over empty office, dark cinematic mood","motion":"downward parallax","purpose":"context"},
+    {"start":31,"end":40,"prompt":"transition from red DVD envelope to modern streaming interface glow across living room screens worldwide, cinematic technology evolution","motion":"match cut and zoom","purpose":"transformation"},
+    {"start":40,"end":48,"prompt":"abandoned video rental store, empty shelves, closed sign, dusty interior, cinematic documentary","motion":"slow pull-back","purpose":"collapse"},
+    {"start":48,"end":55,"prompt":"split visual metaphor old physical media versus global digital streaming network, dramatic premium business documentary ending","motion":"slow push-in","purpose":"lesson"}
+  ],
+  "rules": {
+    "visual_change_seconds": 3,
+    "no_static_background_over_seconds": 4,
+    "captions": "large Arabic kinetic captions, max two lines",
+    "safe_area": "keep critical text away from bottom 22 percent",
+    "branding": "small persistent Content Factory mark; no intrusive watermark"
+  }
+}
