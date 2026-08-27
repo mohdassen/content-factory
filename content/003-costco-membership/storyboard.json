@@ -1,0 +1,13 @@
+{
+  "target_duration": 58,
+  "language": "ar-SA",
+  "scenes": [
+    {"start":0,"end":5,"beat":"hook","visual":"crowded warehouse checkout, membership card taps, rapid cuts","caption":"ليش Costco تبيع عضوية قبل ما تبيعك المنتج؟"},
+    {"start":5,"end":13,"beat":"scale","visual":"giant warehouse aisles, carts full of bulk goods","caption":"نموذج مختلف عن السوبرماركت"},
+    {"start":13,"end":23,"beat":"membership","visual":"membership card transforms into recurring revenue meter","caption":"رسوم عضوية تتكرر كل سنة"},
+    {"start":23,"end":34,"beat":"economics","visual":"low-margin product tags versus stable membership income graphic","caption":"السلعة تجذبك… العضوية تثبّتك"},
+    {"start":34,"end":45,"beat":"loyalty","visual":"families returning repeatedly, carts, renewal icon","caption":"الولاء هو الأصل الحقيقي"},
+    {"start":45,"end":53,"beat":"myth-break","visual":"headline saying Costco profits only from memberships breaks apart","caption":"لكنها لا تربح فقط من العضوية"},
+    {"start":53,"end":58,"beat":"lesson","visual":"membership card becomes flywheel powering warehouse","caption":"الدخل المتكرر يغيّر اقتصاد الشركة"}
+  ]
+}
