@@ -1,0 +1,21 @@
+{
+  "id": "001-netflix-blockbuster",
+  "language": "ar",
+  "format": "short",
+  "aspect_ratio": "9:16",
+  "resolution": "1080x1920",
+  "target_duration_sec": 55,
+  "hook": "في سنة 2000، شركة صغيرة طلبت 50 مليون دولار فقط… والعملاق الذي رفضها اختفى تقريبًا.",
+  "scenes": [
+    {"start": 0, "end": 3, "caption": "50 مليون دولار فقط؟", "visual": "Dark cinematic opening, old DVD rental store, huge 50M number reveal"},
+    {"start": 3, "end": 10, "caption": "Netflix كانت تخسر المال", "visual": "Late-1990s startup office, mailed DVD envelopes, falling cash meter"},
+    {"start": 10, "end": 18, "caption": "Blockbuster كانت العملاق", "visual": "Large video-rental storefront, rows of VHS/DVD shelves, store-count map animation"},
+    {"start": 18, "end": 27, "caption": "صفقة بحوالي 50 مليون", "visual": "Boardroom reenactment, contract slides onto table, digital business icon appears"},
+    {"start": 27, "end": 31, "caption": "الجواب: لا", "visual": "Hard cut, contract stamped DECLINED, bass hit"},
+    {"start": 31, "end": 41, "caption": "القرار لم يكن غبيًا وقتها", "visual": "Dot-com crash headlines, red market chart, struggling startup imagery"},
+    {"start": 41, "end": 49, "caption": "لكن السوق تغيّر", "visual": "DVD morphs into streaming screen, global network lights up"},
+    {"start": 49, "end": 55, "caption": "لا تفترض أن الغد مثل اليوم", "visual": "Split screen: closed rental store vs streaming interface silhouette; final lesson text"}
+  ],
+  "fact_status": "VERIFIED_FOR_SCRIPTING",
+  "source_pack": "research.md"
+}
