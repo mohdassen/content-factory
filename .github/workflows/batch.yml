@@ -44,13 +44,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip edge-tts
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          sudo apt-get install -y ffmpeg fonts-dejavu-core jq
       - name: Generate Arabic narration
         run: python scripts/generate_voice_item.py --id "${{ matrix.item.id }}"
       - name: Render vertical MP4
         run: python scripts/render_item.py --id "${{ matrix.item.id }}"
       - name: Run technical quality gate
         run: python scripts/qc_video.py --id "${{ matrix.item.id }}" --min-duration 35 --max-duration 60
+      - name: Send QC-passed video to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          DECISION="$(jq -r '.decision' output/${{ matrix.item.id }}-qc.json)"
+          DURATION="$(jq -r '.duration_seconds' output/${{ matrix.item.id }}-qc.json)"
+          if [ "$DECISION" != "PASS" ]; then
+            echo "Telegram skipped: QC decision=$DECISION"
+            exit 0
+          fi
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram skipped: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are not available in this repository."
+            exit 0
+          fi
+          curl --fail --silent --show-error \
+            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "video=@output/${{ matrix.item.slug }}-preview.mp4" \
+            -F "supports_streaming=true" \
+            -F "caption=🎬 Content Factory | ${{ matrix.item.id }}\n✅ QC: PASS\n⏱ ${DURATION}s\n${{ matrix.item.slug }}" >/dev/null
+          echo "Telegram delivery successful for ${{ matrix.item.slug }}"
       - name: Upload narration
         uses: actions/upload-artifact@v4
         with:
