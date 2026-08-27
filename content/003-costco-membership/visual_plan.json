@@ -1,0 +1,13 @@
+{
+  "format":"9:16",
+  "style":"premium retail business documentary, energetic warehouse scale, clean data overlays",
+  "shots":[
+    {"start":0,"end":5,"prompt":"busy warehouse club checkout with membership cards and overflowing carts, cinematic commercial documentary, vertical","motion":"fast push and whip cuts"},
+    {"start":5,"end":13,"prompt":"massive warehouse aisles with pallets stacked high and shoppers moving through wide lanes","motion":"gimbal glide"},
+    {"start":13,"end":23,"prompt":"membership card floating above recurring annual revenue rings, tasteful business infographic integrated into real scene","motion":"orbit and parallax"},
+    {"start":23,"end":34,"prompt":"bulk goods price tags on one side, recurring membership meter on other side, premium business explainer visual","motion":"split-screen push"},
+    {"start":34,"end":45,"prompt":"returning families and repeat shoppers entering same warehouse over changing seasons","motion":"match-cut montage"},
+    {"start":45,"end":53,"prompt":"oversimplified viral claim headline cracking to reveal nuanced profit model graphic","motion":"headline break transition"},
+    {"start":53,"end":58,"prompt":"membership card turning a large flywheel that powers warehouse operations, sophisticated business metaphor","motion":"slow dramatic push"}
+  ]
+}
