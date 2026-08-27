@@ -1,0 +1,35 @@
+name: Content Factory CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependency
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Run deterministic demo
+        run: python -m src.main --demo > production-package.json
+
+      - name: Upload production package
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-package
+          path: production-package.json
