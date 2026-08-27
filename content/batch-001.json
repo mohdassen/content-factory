@@ -1,0 +1,13 @@
+{
+  "batch": "001",
+  "goal": "test five high-curiosity business/technology story angles before scaling",
+  "publish_target": "3 shorts/day after quality gate",
+  "ideas": [
+    {"id":"001","title":"Netflix وقرار Blockbuster","pillar":"rise-fall","status":"rendering","hook_angle":"قرار بدا منطقيًا ثم غيّر التاريخ"},
+    {"id":"002","title":"Kodak اخترعت الكاميرا الرقمية ثم خافت منها","pillar":"rise-fall","status":"research","hook_angle":"كيف تخاف شركة من اختراعها؟"},
+    {"id":"003","title":"لماذا Costco تربح من العضوية أكثر مما تتوقع","pillar":"business-secrets","status":"research","hook_angle":"المتجر لا يبيعك فقط المنتجات"},
+    {"id":"004","title":"كيف غيّر NVIDIA رهان واحد إلى إمبراطورية AI","pillar":"ai-future","status":"research","hook_angle":"الرهان الذي سبق طفرة الذكاء الاصطناعي"},
+    {"id":"005","title":"فشل منتج بمليارات الدولارات رغم قوة الشركة","pillar":"money-stories","status":"research","hook_angle":"المال لا يضمن أن يريد الناس المنتج"}
+  ],
+  "measurement": ["viewed_vs_swiped_away","average_percentage_viewed","rewatches","shares","comments","followers_per_1000_views"]
+}
