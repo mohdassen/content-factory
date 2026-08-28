@@ -136,12 +136,18 @@ def make_background(slug: str, scenes: list[dict], output: Path, log_dir: Path) 
 
 def make_outro(logo: Path, output: Path, slug: str, log_dir: Path) -> Path:
     outro=output/f'{slug}-outro.mp4'
-    # Dedicated cinematic brand card: dark background, logo eases in with a subtle zoom and fades out cleanly.
-    frames=int(OUTRO_DURATION*FPS); fade_out=max(0.0,OUTRO_DURATION-.45)
-    fc=(f"[0:v]format=rgba,scale='min(820,iw*(0.88+0.12*min(1,t/0.7)))':-1:eval=frame[lg];"
-        f"color=c=0x05070b:s={WIDTH}x{HEIGHT}:r={FPS}:d={OUTRO_DURATION}[bg];"
-        f"[bg][lg]overlay=(W-w)/2:(H-h)/2:shortest=1,fade=t=in:st=0:d=.28,fade=t=out:st={fade_out:.2f}:d=.45,format=yuv420p[v]")
-    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-loop','1','-framerate',str(FPS),'-i',str(logo),'-filter_complex',fc,'-map','[v]','-t',f'{OUTRO_DURATION:.3f}','-an','-c:v','libx264','-preset','ultrafast','-crf','20','-r',str(FPS),'-pix_fmt','yuv420p',str(outro)],'cinematic-outro',log_dir,90)
+    fade_out=OUTRO_DURATION-0.42
+    # Stable cinematic card: generated dark canvas + vignette + softly faded approved logo.
+    # No time-dependent scale expressions: this avoids FFmpeg filter negotiation failures seen in production.
+    fc=(f"color=c=0x05070b:s={WIDTH}x{HEIGHT}:r={FPS}:d={OUTRO_DURATION}[bg];"
+        f"[bg]vignette=PI/5:eval=frame[cinema];"
+        f"[0:v]scale=820:-2:force_original_aspect_ratio=decrease,format=rgba,"
+        f"fade=t=in:st=0:d=0.32:alpha=1,fade=t=out:st={fade_out:.2f}:d=0.42:alpha=1[lg];"
+        f"[cinema][lg]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]")
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-loop','1','-framerate',str(FPS),'-i',str(logo),'-filter_complex',fc,'-map','[v]','-t',f'{OUTRO_DURATION:.3f}','-an','-c:v','libx264','-preset','veryfast','-crf','19','-r',str(FPS),'-pix_fmt','yuv420p','-movflags','+faststart',str(outro)],'cinematic-outro',log_dir,90)
+    actual=probe_duration(outro)
+    if actual < OUTRO_DURATION-0.20:
+        raise SystemExit(f'Cinematic outro unexpectedly short: {actual:.3f}s')
     return outro
 
 
@@ -155,16 +161,16 @@ def main() -> None:
     subtitle=output/f'{slug}.ass'; write_ass(words,subtitle); bg,masters=make_background(slug,scenes,output,log_dir)
     sub=str(subtitle).replace(':',r'\:').replace("'",r"\'"); body=output/f'{slug}-body.mp4'
     fc=f"[0:v]subtitles='{sub}'[base];[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[lg];[base][lg]overlay=W-w-38:42:shortest=1,format=yuv420p[v]"
-    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(bg),'-i',str(voice),'-loop','1','-framerate','1','-i',str(logo),'-filter_complex',fc,'-map','[v]','-map','1:a:0','-t',f'{duration:.3f}','-c:v','libx264','-preset','ultrafast','-crf','22','-c:a','aac','-b:a','128k','-pix_fmt','yuv420p',str(body)],'body-compose',log_dir,420)
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(bg),'-i',str(voice),'-loop','1','-framerate','1','-i',str(logo),'-filter_complex',fc,'-map','[v]','-map','1:a:0','-t',f'{duration:.3f}','-c:v','libx264','-preset','ultrafast','-crf','22','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-pix_fmt','yuv420p',str(body)],'body-compose',log_dir,420)
     outro=make_outro(logo,output,slug,log_dir); out=output/f'{slug}-preview.mp4'
-    # Add silent audio to outro, then concat body + outro so Telegram receives one complete MP4.
     outro_av=output/f'{slug}-outro-av.mp4'
-    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(outro),'-f','lavfi','-t',f'{OUTRO_DURATION:.3f}','-i','anullsrc=r=44100:cl=stereo','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','128k','-shortest',str(outro_av)],'outro-audio',log_dir,90)
-    concat=output/f'{slug}-final-concat.txt'; concat.write_text(f"file '{body.resolve()}'\nfile '{outro_av.resolve()}'\n",encoding='utf-8')
-    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-f','concat','-safe','0','-i',str(concat),'-c','copy','-movflags','+faststart',str(out)],'final-with-outro',log_dir,120)
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(outro),'-f','lavfi','-t',f'{OUTRO_DURATION:.3f}','-i','anullsrc=r=44100:cl=stereo','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-shortest',str(outro_av)],'outro-audio',log_dir,90)
+    # Re-encode the join rather than stream-copying heterogeneous MP4 segments; this is slower but deterministic.
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(body),'-i',str(outro_av),'-filter_complex','[0:v]setsar=1[v0];[1:v]setsar=1[v1];[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[1:a]aresample=44100,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]','-map','[v]','-map','[a]','-c:v','libx264','-preset','veryfast','-crf','21','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-movflags','+faststart',str(out)],'final-with-outro',log_dir,240)
     final_duration=probe_duration(out); expected=duration+OUTRO_DURATION
-    if final_duration<expected-.9: raise SystemExit(f'Final video missing/short outro: {final_duration:.3f}s vs expected {expected:.3f}s')
-    (output/f'{slug}-render.json').write_text(json.dumps({'slug':slug,'architecture':'V3_GOLDEN_STRICT','renderer_mode':'ROBUST_STAGED_V1','duration':round(final_duration,3),'narration_duration':round(duration,3),'scene_count':len(scenes),'narration_timing':timing_source,'scene_timing':'NARRATION_PARAGRAPH_ALIGNED','all_visuals_are_approved_masters':True,'brand_name':'خلف الشاشة','brand_logo':str(logo),'brand_logo_position':'top_right','cinematic_outro':True,'outro_duration_seconds':OUTRO_DURATION,'outro_asset':str(logo),'visuals':masters,'forbidden_fallbacks_enabled':False,'diagnostics_dir':str(log_dir)},ensure_ascii=False,indent=2),encoding='utf-8')
+    outro_verified=final_duration>=expected-0.70
+    if not outro_verified: raise SystemExit(f'Final video missing/short outro: {final_duration:.3f}s vs expected {expected:.3f}s')
+    (output/f'{slug}-render.json').write_text(json.dumps({'slug':slug,'architecture':'V3_GOLDEN_STRICT','renderer_mode':'ROBUST_STAGED_V2','duration':round(final_duration,3),'narration_duration':round(duration,3),'scene_count':len(scenes),'narration_timing':timing_source,'scene_timing':'NARRATION_PARAGRAPH_ALIGNED','all_visuals_are_approved_masters':True,'brand_name':'خلف الشاشة','brand_logo':str(logo),'brand_logo_position':'top_right','cinematic_outro':True,'cinematic_outro_verified':outro_verified,'outro_duration_seconds':OUTRO_DURATION,'outro_asset':str(logo),'visuals':masters,'forbidden_fallbacks_enabled':False,'diagnostics_dir':str(log_dir)},ensure_ascii=False,indent=2),encoding='utf-8')
     print(out)
 
 if __name__=='__main__': main()
