@@ -146,111 +146,41 @@ def make_background(slug: str, scenes: list[dict], output: Path, log_dir: Path) 
     seg_dir = output / f'{slug}-segments'
     seg_dir.mkdir(parents=True, exist_ok=True)
     files, visual_meta = [], []
-
     for idx, scene in enumerate(scenes, 1):
         length = max(0.35, float(scene['end']) - float(scene['start']))
         image = strict_master(slug, idx)
         w, h = validate_master(image)
         segment = seg_dir / f'{idx:02}.mp4'
-        fade_in = 0.12 if idx > 1 else 0.20
-        fade_out = 0.12 if idx < len(scenes) else 0.20
-        fade_out_start = max(0.0, length - fade_out)
-
-        # Deliberately robust: no zoompan/vignette/unsharp. Those caused runaway CPU in GitHub runners.
-        vf = (
-            f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop={WIDTH}:{HEIGHT},"
-            "eq=contrast=1.02:saturation=1.015,"
-            f"fade=t=in:st=0:d={fade_in:.3f},"
-            f"fade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f},"
-            "format=yuv420p"
-        )
-        run_ffmpeg([
-            'ffmpeg', '-nostdin', '-y', '-hide_banner', '-loglevel', 'warning',
-            '-loop', '1', '-framerate', str(FPS), '-i', str(image),
-            '-t', f'{length:.3f}', '-vf', vf, '-an', '-c:v', 'libx264',
-            '-preset', 'veryfast', '-crf', '19', '-r', str(FPS), '-pix_fmt', 'yuv420p', str(segment)
-        ], f'segment-{idx:02}', log_dir, timeout=120)
+        vf = f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},format=yuv420p"
+        run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-loop','1','-framerate',str(FPS),'-i',str(image),'-t',f'{length:.3f}','-vf',vf,'-an','-c:v','libx264','-preset','ultrafast','-crf','21','-r',str(FPS),'-pix_fmt','yuv420p',str(segment)], f'segment-{idx:02}', log_dir, timeout=90)
         files.append(segment)
-        visual_meta.append({'scene': idx, 'master': str(image), 'source_width': w, 'source_height': h, 'fit': 'aspect_preserved_center_crop'})
-
+        visual_meta.append({'scene':idx,'master':str(image),'source_width':w,'source_height':h,'fit':'aspect_preserved_center_crop'})
     concat = seg_dir / 'concat.txt'
     concat.write_text('\n'.join(f"file '{p.resolve()}'" for p in files), encoding='utf-8')
     bg = output / f'{slug}-background.mp4'
-    run_ffmpeg([
-        'ffmpeg', '-nostdin', '-y', '-hide_banner', '-loglevel', 'warning',
-        '-f', 'concat', '-safe', '0', '-i', str(concat), '-c', 'copy', '-movflags', '+faststart', str(bg)
-    ], 'concat', log_dir, timeout=90)
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-f','concat','-safe','0','-i',str(concat),'-c','copy','-movflags','+faststart',str(bg)], 'concat', log_dir, timeout=60)
     return bg, visual_meta
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--id', required=True)
-    args = ap.parse_args()
-
-    story = find_story(args.id)
-    slug = story.name
-    output = Path('output')
-    output.mkdir(exist_ok=True)
-    log_dir = output / 'diagnostics' / slug
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    voice = output / f'{slug}-voice.mp3'
-    timing = output / f'{slug}-word-boundaries.json'
-    logo = Path('assets') / 'brand' / 'logo.webp'
-    if not voice.exists():
-        raise SystemExit('Missing narration audio.')
-    if not logo.exists():
-        raise SystemExit('STRICT V3 requires the approved brand logo asset.')
-
-    duration = probe_duration(voice)
-    words, timing_source = load_timing(timing)
-    scenes = scene_plan(story, words, duration)
-    subtitle = output / f'{slug}.ass'
-    write_ass(words, subtitle)
-    bg, masters = make_background(slug, scenes, output, log_dir)
-
-    sub = str(subtitle).replace(':', r'\:').replace("'", r"\'")
-    # Keep final composition minimal and deterministic: subtitles + approved logo only.
-    filter_complex = (
-        f"[0:v]subtitles='{sub}'[base];"
-        "[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[logo];"
-        "[base][logo]overlay=W-w-38:42:shortest=1,format=yuv420p[v]"
-    )
-    out = output / f'{slug}-preview.mp4'
-    run_ffmpeg([
-        'ffmpeg', '-nostdin', '-y', '-hide_banner', '-loglevel', 'warning',
-        '-i', str(bg), '-i', str(voice), '-loop', '1', '-framerate', str(FPS), '-i', str(logo),
-        '-filter_complex', filter_complex,
-        '-map', '[v]', '-map', '1:a:0', '-t', f'{duration:.3f}',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19',
-        '-c:a', 'aac', '-b:a', '160k', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(out)
-    ], 'final-compose', log_dir, timeout=180)
-
-    final_duration = probe_duration(out)
-    if final_duration < max(1.0, duration - 0.75):
-        raise SystemExit(f'Final video unexpectedly short: {final_duration:.3f}s vs narration {duration:.3f}s')
-
-    metadata = output / f'{slug}-render.json'
-    metadata.write_text(json.dumps({
-        'slug': slug,
-        'architecture': 'V3_GOLDEN_STRICT',
-        'renderer_mode': 'ROBUST_STAGED_V1',
-        'duration': round(final_duration, 3),
-        'scene_count': len(scenes),
-        'narration_timing': timing_source,
-        'scene_timing': 'NARRATION_PARAGRAPH_ALIGNED',
-        'all_visuals_are_approved_masters': True,
-        'brand_name': 'خلف الشاشة',
-        'brand_logo': str(logo),
-        'brand_logo_position': 'top_right',
-        'visuals': masters,
-        'forbidden_fallbacks_enabled': False,
-        'diagnostics_dir': str(log_dir),
-    }, ensure_ascii=False, indent=2), encoding='utf-8')
+    ap=argparse.ArgumentParser(); ap.add_argument('--id',required=True); args=ap.parse_args()
+    story=find_story(args.id); slug=story.name
+    output=Path('output'); output.mkdir(exist_ok=True)
+    log_dir=output/'diagnostics'/slug; log_dir.mkdir(parents=True,exist_ok=True)
+    voice=output/f'{slug}-voice.mp3'; timing=output/f'{slug}-word-boundaries.json'; logo=Path('assets')/'brand'/'logo.webp'
+    if not voice.exists(): raise SystemExit('Missing narration audio.')
+    if not logo.exists(): raise SystemExit('STRICT V3 requires the approved brand logo asset.')
+    duration=probe_duration(voice); words,timing_source=load_timing(timing); scenes=scene_plan(story,words,duration)
+    subtitle=output/f'{slug}.ass'; write_ass(words,subtitle)
+    bg,masters=make_background(slug,scenes,output,log_dir)
+    sub=str(subtitle).replace(':',r'\:').replace("'",r"\'")
+    out=output/f'{slug}-preview.mp4'
+    # Single lightweight final encode. Static logo is decoded once; subtitles are burned during the same pass.
+    fc=f"[0:v]subtitles='{sub}'[base];[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[lg];[base][lg]overlay=W-w-38:42:format=auto[v]"
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(bg),'-i',str(voice),'-i',str(logo),'-filter_complex',fc,'-map','[v]','-map','1:a:0','-t',f'{duration:.3f}','-c:v','libx264','-preset','ultrafast','-crf','22','-threads','0','-c:a','aac','-b:a','128k','-pix_fmt','yuv420p','-movflags','+faststart',str(out)], 'final-compose', log_dir, timeout=420)
+    final_duration=probe_duration(out)
+    if final_duration < max(1.0,duration-0.75): raise SystemExit(f'Final video unexpectedly short: {final_duration:.3f}s vs narration {duration:.3f}s')
+    (output/f'{slug}-render.json').write_text(json.dumps({'slug':slug,'architecture':'V3_GOLDEN_STRICT','renderer_mode':'ROBUST_STAGED_V1','duration':round(final_duration,3),'scene_count':len(scenes),'narration_timing':timing_source,'scene_timing':'NARRATION_PARAGRAPH_ALIGNED','all_visuals_are_approved_masters':True,'brand_name':'خلف الشاشة','brand_logo':str(logo),'brand_logo_position':'top_right','visuals':masters,'forbidden_fallbacks_enabled':False,'diagnostics_dir':str(log_dir)},ensure_ascii=False,indent=2),encoding='utf-8')
     print(out)
 
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__': main()
