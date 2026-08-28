@@ -104,6 +104,26 @@ jobs:
           test "$(jq -r '.narration_timing' "$META")" = 'REAL_WORD_BOUNDARIES' || { echo 'BLOCKED: real narration timing missing'; exit 1; }
           test "$(jq -r '.decision' "$QC")" = 'PASS' || { echo 'BLOCKED: QC did not pass'; exit 1; }
 
+      - name: Create immutable versioned archive
+        id: archive
+        shell: bash
+        run: |
+          SLUG='${{ steps.story.outputs.slug }}'
+          ID='${{ steps.story.outputs.id }}'
+          VERSION="v$(printf '%03d' '${{ github.run_number }}')"
+          STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          ARCHIVE="archive/${SLUG}/${VERSION}-${STAMP}"
+          mkdir -p "$ARCHIVE/scenes"
+          cp "output/${SLUG}-preview.mp4" "$ARCHIVE/${SLUG}-${VERSION}.mp4"
+          cp "output/${SLUG}-render.json" "$ARCHIVE/render.json"
+          cp "output/${ID}-qc.json" "$ARCHIVE/qc.json"
+          cp -a "assets/stories/${SLUG}/scenes/." "$ARCHIVE/scenes/"
+          find assets/stories/${SLUG} -maxdepth 1 -type f \( -name '*.mp3' -o -name '*.wav' -o -name '*.json' -o -name '*.srt' -o -name '*.vtt' \) -exec cp {} "$ARCHIVE/" \; || true
+          printf '{"story":"%s","version":"%s","created_utc":"%s","run_id":"%s","commit":"%s","architecture":"V3_GOLDEN_STRICT"}\n' "$SLUG" "$VERSION" "$STAMP" '${{ github.run_id }}' '${{ github.sha }}' > "$ARCHIVE/archive-manifest.json"
+          echo "dir=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Archived immutable render at $ARCHIVE"
+
       - name: Send review images and strict V3 video to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -127,14 +147,14 @@ jobs:
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
             -F "video=@${VIDEO}" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}\n\nرد بالموافقة أو الملاحظات قبل النشر." >/dev/null
+            -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN | ${{ steps.archive.outputs.version }}\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}\n\nرد بالموافقة أو الملاحظات قبل النشر." >/dev/null
           echo 'Telegram review delivery successful.'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.story.outputs.slug }}-v3-golden
+          name: ${{ steps.story.outputs.slug }}-${{ steps.archive.outputs.version }}-v3-golden
+          retention-days: 90
+          if-no-files-found: error
           path: |
-            assets/stories/${{ steps.story.outputs.slug }}/scenes/
+            ${{ steps.archive.outputs.dir }}/
             output/${{ steps.story.outputs.slug }}-preview.mp4
-            output/${{ steps.story.outputs.slug }}-render.json
-            output/${{ steps.story.outputs.id }}-qc.json
