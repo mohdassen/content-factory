@@ -122,13 +122,38 @@ def validate_master(image: Path) -> tuple[int,int]:
     return w,h
 
 
-def make_background(slug: str, scenes: list[dict], output: Path, log_dir: Path) -> tuple[Path,list[dict]]:
+def cinematic_filter(idx: int, length: float) -> str:
+    # Controlled V3.1 presentation layer. No scene timing, audio, subtitle, QC or delivery changes.
+    # Scene 1 gets a slightly stronger hook push; later scenes alternate slow push/pull directions.
+    frames=max(2,int(round(length*FPS)))
+    if idx == 1:
+        z="min(zoom+0.0018,1.12)"
+        x="iw/2-(iw/zoom/2)"
+        y="ih/2-(ih/zoom/2)"
+    elif idx % 3 == 1:
+        z="min(zoom+0.00075,1.065)"
+        x="iw/2-(iw/zoom/2)+18*sin(on/42)"
+        y="ih/2-(ih/zoom/2)"
+    elif idx % 3 == 2:
+        z="min(zoom+0.00065,1.055)"
+        x="iw/2-(iw/zoom/2)-22*sin(on/48)"
+        y="ih/2-(ih/zoom/2)+12*sin(on/55)"
+    else:
+        z="if(eq(on,0),1.06,max(1.0,zoom-0.00055))"
+        x="iw/2-(iw/zoom/2)"
+        y="ih/2-(ih/zoom/2)-14*sin(on/50)"
+    return (f"scale=1220:2170:force_original_aspect_ratio=increase,crop=1220:2170,"
+            f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS},"
+            f"trim=duration={length:.3f},setpts=PTS-STARTPTS,format=yuv420p")
+
+
+def make_background(slug: str, scenes: list[dict], output: Path, log_dir: Path, cinematic_motion: bool=False) -> tuple[Path,list[dict]]:
     seg_dir=output/f'{slug}-segments'; seg_dir.mkdir(parents=True,exist_ok=True); files=[]; meta=[]
     for idx,scene in enumerate(scenes,1):
         length=max(.35,float(scene['end'])-float(scene['start'])); image=strict_master(slug,idx); w,h=validate_master(image); segment=seg_dir/f'{idx:02}.mp4'
-        vf=f'scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},format=yuv420p'
-        run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-loop','1','-framerate',str(FPS),'-i',str(image),'-t',f'{length:.3f}','-vf',vf,'-an','-c:v','libx264','-preset','ultrafast','-crf','21','-r',str(FPS),'-pix_fmt','yuv420p',str(segment)],f'segment-{idx:02}',log_dir,90)
-        files.append(segment); meta.append({'scene':idx,'master':str(image),'source_width':w,'source_height':h,'fit':'aspect_preserved_center_crop'})
+        vf=cinematic_filter(idx,length) if cinematic_motion else f'scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},format=yuv420p'
+        run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-loop','1','-framerate',str(FPS),'-i',str(image),'-t',f'{length:.3f}','-vf',vf,'-an','-c:v','libx264','-preset','ultrafast','-crf','21','-r',str(FPS),'-pix_fmt','yuv420p',str(segment)],f'segment-{idx:02}',log_dir,120 if cinematic_motion else 90)
+        files.append(segment); meta.append({'scene':idx,'master':str(image),'source_width':w,'source_height':h,'fit':'aspect_preserved_center_crop','cinematic_motion':cinematic_motion})
     concat=seg_dir/'concat.txt'; concat.write_text('\n'.join(f"file '{p.resolve()}'" for p in files),encoding='utf-8'); bg=output/f'{slug}-background.mp4'
     run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-f','concat','-safe','0','-i',str(concat),'-c','copy','-movflags','+faststart',str(bg)],'concat',log_dir,60)
     return bg,meta
@@ -137,8 +162,6 @@ def make_background(slug: str, scenes: list[dict], output: Path, log_dir: Path) 
 def make_outro(logo: Path, output: Path, slug: str, log_dir: Path) -> Path:
     outro=output/f'{slug}-outro.mp4'
     fade_out=OUTRO_DURATION-0.42
-    # Stable cinematic card: generated dark canvas + vignette + softly faded approved logo.
-    # No time-dependent scale expressions: this avoids FFmpeg filter negotiation failures seen in production.
     fc=(f"color=c=0x05070b:s={WIDTH}x{HEIGHT}:r={FPS}:d={OUTRO_DURATION}[bg];"
         f"[bg]vignette=PI/5:eval=frame[cinema];"
         f"[0:v]scale=820:-2:force_original_aspect_ratio=decrease,format=rgba,"
@@ -158,19 +181,19 @@ def main() -> None:
     if not voice.exists(): raise SystemExit('Missing narration audio.')
     if not logo.exists(): raise SystemExit('STRICT V3 requires the stable PNG brand logo asset.')
     probe_dimensions(logo); duration=probe_duration(voice); words,timing_source=load_timing(timing); scenes=scene_plan(story,words,duration)
-    subtitle=output/f'{slug}.ass'; write_ass(words,subtitle); bg,masters=make_background(slug,scenes,output,log_dir)
+    cinematic_motion=int(args.id) >= 7
+    subtitle=output/f'{slug}.ass'; write_ass(words,subtitle); bg,masters=make_background(slug,scenes,output,log_dir,cinematic_motion=cinematic_motion)
     sub=str(subtitle).replace(':',r'\:').replace("'",r"\'"); body=output/f'{slug}-body.mp4'
     fc=f"[0:v]subtitles='{sub}'[base];[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[lg];[base][lg]overlay=W-w-38:42:shortest=1,format=yuv420p[v]"
     run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(bg),'-i',str(voice),'-loop','1','-framerate','1','-i',str(logo),'-filter_complex',fc,'-map','[v]','-map','1:a:0','-t',f'{duration:.3f}','-c:v','libx264','-preset','ultrafast','-crf','22','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-pix_fmt','yuv420p',str(body)],'body-compose',log_dir,420)
     outro=make_outro(logo,output,slug,log_dir); out=output/f'{slug}-preview.mp4'
     outro_av=output/f'{slug}-outro-av.mp4'
     run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(outro),'-f','lavfi','-t',f'{OUTRO_DURATION:.3f}','-i','anullsrc=r=44100:cl=stereo','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-shortest',str(outro_av)],'outro-audio',log_dir,90)
-    # Re-encode the join rather than stream-copying heterogeneous MP4 segments; this is slower but deterministic.
     run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(body),'-i',str(outro_av),'-filter_complex','[0:v]setsar=1[v0];[1:v]setsar=1[v1];[0:a]aresample=44100,aformat=channel_layouts=stereo[a0];[1:a]aresample=44100,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]','-map','[v]','-map','[a]','-c:v','libx264','-preset','veryfast','-crf','21','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-movflags','+faststart',str(out)],'final-with-outro',log_dir,240)
     final_duration=probe_duration(out); expected=duration+OUTRO_DURATION
     outro_verified=final_duration>=expected-0.70
     if not outro_verified: raise SystemExit(f'Final video missing/short outro: {final_duration:.3f}s vs expected {expected:.3f}s')
-    (output/f'{slug}-render.json').write_text(json.dumps({'slug':slug,'architecture':'V3_GOLDEN_STRICT','renderer_mode':'ROBUST_STAGED_V2','duration':round(final_duration,3),'narration_duration':round(duration,3),'scene_count':len(scenes),'narration_timing':timing_source,'scene_timing':'NARRATION_PARAGRAPH_ALIGNED','all_visuals_are_approved_masters':True,'brand_name':'خلف الشاشة','brand_logo':str(logo),'brand_logo_position':'top_right','cinematic_outro':True,'cinematic_outro_verified':outro_verified,'outro_duration_seconds':OUTRO_DURATION,'outro_asset':str(logo),'visuals':masters,'forbidden_fallbacks_enabled':False,'diagnostics_dir':str(log_dir)},ensure_ascii=False,indent=2),encoding='utf-8')
+    (output/f'{slug}-render.json').write_text(json.dumps({'slug':slug,'architecture':'V3_GOLDEN_STRICT','renderer_mode':'ROBUST_STAGED_V2','presentation_layer':'V3.1_CINEMATIC_MOTION' if cinematic_motion else 'V3_BASELINE','duration':round(final_duration,3),'narration_duration':round(duration,3),'scene_count':len(scenes),'narration_timing':timing_source,'scene_timing':'NARRATION_PARAGRAPH_ALIGNED','all_visuals_are_approved_masters':True,'brand_name':'خلف الشاشة','brand_logo':str(logo),'brand_logo_position':'top_right','cinematic_outro':True,'cinematic_outro_verified':outro_verified,'outro_duration_seconds':OUTRO_DURATION,'outro_asset':str(logo),'visuals':masters,'forbidden_fallbacks_enabled':False,'diagnostics_dir':str(log_dir)},ensure_ascii=False,indent=2),encoding='utf-8')
     print(out)
 
 if __name__=='__main__': main()
