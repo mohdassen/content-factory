@@ -1,0 +1,2 @@
+007
+Production test using V3 Golden stable baseline. Apply only safe presentation-layer improvements; preserve FLUX, render, QC, cinematic outro, and Telegram delivery architecture.
