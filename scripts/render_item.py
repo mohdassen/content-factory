@@ -25,7 +25,11 @@ def find_story(content_id: str) -> Path:
 
 
 def run_text(cmd: list[str]) -> str:
-    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+
+
+def run_ffmpeg(cmd: list[str], timeout: int = 900) -> None:
+    subprocess.run(cmd, check=True, timeout=timeout)
 
 
 def probe_duration(media: Path) -> float:
@@ -78,11 +82,9 @@ def scene_plan(story: Path, words: list[dict], duration: float) -> list[dict]:
             boundaries.append(duration)
             return [{'start': boundaries[i], 'end': boundaries[i + 1]} for i in range(len(boundaries) - 1)]
 
-    # Golden fallback: one independently generated master per narration paragraph.
     paragraphs = [p.strip() for p in story.joinpath('script_ar.txt').read_text(encoding='utf-8').split('\n\n') if p.strip()]
     if len(paragraphs) < 2:
         raise SystemExit('STRICT V3 requires multiple narration paragraphs or an authored storyboard.')
-
     token_counts = [max(1, len(p.split())) for p in paragraphs]
     total_tokens = sum(token_counts)
     boundaries = [0.0]
@@ -146,7 +148,6 @@ def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, 
     seg_dir = output / f'{slug}-segments'
     seg_dir.mkdir(parents=True, exist_ok=True)
     files, visual_meta = [], []
-
     for idx, scene in enumerate(scenes, 1):
         length = max(0.35, scene['end'] - scene['start'])
         image = strict_master(slug, idx)
@@ -156,8 +157,6 @@ def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, 
         fade_in = 0.10 if idx > 1 else 0.18
         fade_out = 0.10 if idx < len(scenes) else 0.20
         fade_out_start = max(0.0, length - fade_out)
-
-        # Preserve aspect ratio. Fill 9:16 with centered crop only; never stretch.
         vf = (
             "scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,"
@@ -168,18 +167,18 @@ def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, 
             f"fade=t=in:st=0:d={fade_in:.3f},"
             f"fade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f},format=yuv420p"
         )
-        subprocess.run([
-            'ffmpeg', '-y', '-framerate', '30', '-loop', '1', '-i', str(image),
+        run_ffmpeg([
+            'ffmpeg', '-nostdin', '-y', '-loglevel', 'warning', '-loop', '1', '-i', str(image),
             '-t', f'{length:.3f}', '-vf', vf, '-an', '-c:v', 'libx264',
-            '-preset', 'medium', '-crf', '18', '-r', '30', str(segment)
-        ], check=True)
+            '-preset', 'veryfast', '-crf', '18', '-r', '30', '-threads', '2', str(segment)
+        ], timeout=600)
         files.append(segment)
         visual_meta.append({'scene': idx, 'master': str(image), 'source_width': w, 'source_height': h, 'fit': 'aspect_preserved_center_crop'})
 
     concat = seg_dir / 'concat.txt'
     concat.write_text('\n'.join(f"file '{p.resolve()}'" for p in files), encoding='utf-8')
     bg = output / f'{slug}-background.mp4'
-    subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', str(concat), '-c', 'copy', str(bg)], check=True)
+    run_ffmpeg(['ffmpeg', '-nostdin', '-y', '-loglevel', 'warning', '-f', 'concat', '-safe', '0', '-i', str(concat), '-c', 'copy', str(bg)], timeout=180)
     return bg, visual_meta
 
 
@@ -187,12 +186,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--id', required=True)
     args = ap.parse_args()
-
     story = find_story(args.id)
     slug = story.name
     output = Path('output')
     output.mkdir(exist_ok=True)
-
     voice = output / f'{slug}-voice.mp3'
     timing = output / f'{slug}-word-boundaries.json'
     logo = Path('assets') / 'brand' / 'logo.webp'
@@ -200,15 +197,12 @@ def main() -> None:
         raise SystemExit('Missing narration audio.')
     if not logo.exists():
         raise SystemExit('STRICT V3 requires the approved brand logo asset.')
-
     duration = probe_duration(voice)
     words, timing_source = load_timing(timing)
     scenes = scene_plan(story, words, duration)
-
     subtitle = output / f'{slug}.ass'
     write_ass(words, subtitle)
     bg, masters = make_background(slug, scenes, output)
-
     sub = str(subtitle).replace(':', r'\:').replace("'", r"\'")
     filter_complex = (
         f"[0:v]subtitles='{sub}',"
@@ -218,13 +212,12 @@ def main() -> None:
         "[base][logo]overlay=W-w-38:42:format=auto,format=yuv420p[v]"
     )
     out = output / f'{slug}-preview.mp4'
-    subprocess.run([
-        'ffmpeg', '-y', '-i', str(bg), '-i', str(voice), '-framerate', '30', '-loop', '1', '-i', str(logo),
+    run_ffmpeg([
+        'ffmpeg', '-nostdin', '-y', '-loglevel', 'warning', '-i', str(bg), '-i', str(voice), '-loop', '1', '-i', str(logo),
         '-filter_complex', filter_complex, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=7',
-        '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
-        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(out)
-    ], check=True)
-
+        '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-threads', '2', str(out)
+    ], timeout=900)
     metadata = output / f'{slug}-render.json'
     metadata.write_text(json.dumps({
         'slug': slug,
