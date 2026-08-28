@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.heygen-delivery/**'
+      - '.github/workflows/heygen-delivery.yml'
 
 jobs:
   deliver:
@@ -29,29 +30,63 @@ jobs:
         run: |
           curl --fail --location --retry 3 --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
           test -s /tmp/source.mp4
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 /tmp/source.mp4
 
-      - name: Install FFmpeg
+      - name: Install media dependencies
         shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          sudo apt-get install -y -qq ffmpeg python3-pil fonts-noto-core
+
+      - name: Build and validate PNG brand logo
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw, ImageFont
+          dst = Path('/tmp/khalf-logo.png')
+          W,H=900,300
+          im=Image.new('RGBA',(W,H),(0,0,0,0))
+          d=ImageDraw.Draw(im)
+          candidates=[
+              '/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf',
+              '/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf',
+              '/usr/share/fonts/opentype/noto/NotoSansArabic-Bold.ttf',
+              '/usr/share/fonts/opentype/noto/NotoSansArabic-Regular.ttf',
+          ]
+          fp=next((p for p in candidates if Path(p).exists()), None)
+          if not fp:
+              raise SystemExit('Arabic Noto font not found')
+          font=ImageFont.truetype(fp,92)
+          small=ImageFont.truetype(fp,34)
+          d.rounded_rectangle((18,18,882,282),radius=64,fill=(8,12,18,224),outline=(255,255,255,48),width=3)
+          d.ellipse((62,67,230,235),outline=(255,255,255,230),width=12)
+          d.polygon([(132,112),(132,190),(190,151)],fill=(255,255,255,235))
+          d.text((830,72),'خلف الشاشة',font=font,fill=(255,255,255,255),anchor='ra',direction='rtl')
+          d.text((825,190),'قصص ما وراء التقنية',font=small,fill=(220,225,232,220),anchor='ra',direction='rtl')
+          im.save(dst,'PNG',optimize=True)
+          with Image.open(dst) as check:
+              check.verify()
+          PY
+          test -s /tmp/khalf-logo.png
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 /tmp/khalf-logo.png
 
       - name: Apply watermark
         shell: bash
         run: |
-          test -s branding/khalf-alraqam-logo.jpg || { echo 'Missing brand asset'; exit 1; }
           ffmpeg -hide_banner -loglevel error -y \
-            -i /tmp/source.mp4 -i branding/khalf-alraqam-logo.jpg \
-            -filter_complex "[1:v]scale=150:-2,format=rgba,colorchannelmixer=aa=0.72[logo];[0:v][logo]overlay=W-w-36:36:format=auto[v]" \
+            -i /tmp/source.mp4 -loop 1 -i /tmp/khalf-logo.png \
+            -filter_complex "[1:v]scale=300:-2,format=rgba,colorchannelmixer=aa=0.72[logo];[0:v][logo]overlay=W-w-36:36:format=auto:shortest=1[v]" \
             -map "[v]" -map 0:a? -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
-            -c:a aac -b:a 160k -movflags +faststart /tmp/main.mp4
+            -c:a aac -b:a 160k -movflags +faststart -shortest /tmp/main.mp4
           test -s /tmp/main.mp4
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/main.mp4
 
       - name: Build outro
         shell: bash
         run: |
           ffmpeg -hide_banner -loglevel error -y \
-            -loop 1 -i branding/khalf-alraqam-logo.jpg \
+            -loop 1 -i /tmp/khalf-logo.png \
             -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
             -t 2 \
             -vf "scale=760:760:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,fade=t=in:st=0:d=0.3,fade=t=out:st=1.6:d=0.4,format=yuv420p" \
@@ -74,8 +109,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         shell: bash
         run: |
-          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || exit 1
-          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets missing'; exit 1; }
+          RESPONSE="$(curl --fail --silent --show-error --retry 3 --retry-delay 2 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
             -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@/tmp/heygen-branded.mp4" -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ النسخة الجديدة بالشعار المعتمد")"
-          echo "$RESPONSE" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
+            -F "caption=🎬 خلف الشاشة | ${{ steps.request.outputs.title }}\n✅ النسخة الجديدة بالشعار المعتمد")"
+          echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
