@@ -25,18 +25,18 @@ jobs:
           echo "title=${TITLE:-HeyGen review}" >> "$GITHUB_OUTPUT"
           printf '%s' "$URL" > /tmp/video_url
 
-      - name: Download HeyGen video
-        shell: bash
-        run: |
-          curl --fail --location --retry 3 --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
-          test -s /tmp/source.mp4
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 /tmp/source.mp4
-
       - name: Install media dependencies
         shell: bash
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg python3-pil fonts-noto-core
+
+      - name: Download and validate HeyGen video
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
+          test -s /tmp/source.mp4
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 /tmp/source.mp4
 
       - name: Build and validate PNG brand logo
         shell: bash
