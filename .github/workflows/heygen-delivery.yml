@@ -131,5 +131,5 @@ jobs:
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
             -F "video=@/tmp/heygen-branded.mp4" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الشاشة | ${{ steps.request.outputs.title }}\n✅ الشعار المعتمد + النهاية السينمائية + فحص النهاية PASS")"
+            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ الشعار المعتمد + النهاية السينمائية + فحص النهاية PASS")"
           echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
