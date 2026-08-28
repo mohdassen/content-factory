@@ -29,7 +29,17 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg python3-pil fonts-noto-core
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Decode approved brand assets
+        shell: bash
+        run: |
+          test -s branding/watermark.b64 || { echo 'Missing watermark asset'; exit 1; }
+          test -s branding/outro.b64 || { echo 'Missing outro asset'; exit 1; }
+          base64 -d branding/watermark.b64 > /tmp/watermark.png
+          base64 -d branding/outro.b64 > /tmp/outro.jpg
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,pix_fmt -of default=nw=1 /tmp/watermark.png
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of default=nw=1 /tmp/outro.jpg
 
       - name: Download and validate HeyGen video
         shell: bash
@@ -38,68 +48,63 @@ jobs:
           test -s /tmp/source.mp4
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 /tmp/source.mp4
 
-      - name: Build and validate PNG brand logo
+      - name: Detect real content ending
+        id: trim
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          from PIL import Image, ImageDraw, ImageFont
-          dst = Path('/tmp/khalf-logo.png')
-          W,H=900,300
-          im=Image.new('RGBA',(W,H),(0,0,0,0))
-          d=ImageDraw.Draw(im)
-          candidates=[
-              '/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf',
-              '/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf',
-              '/usr/share/fonts/opentype/noto/NotoSansArabic-Bold.ttf',
-              '/usr/share/fonts/opentype/noto/NotoSansArabic-Regular.ttf',
-          ]
-          fp=next((p for p in candidates if Path(p).exists()), None)
-          if not fp:
-              raise SystemExit('Arabic Noto font not found')
-          font=ImageFont.truetype(fp,92)
-          small=ImageFont.truetype(fp,34)
-          d.rounded_rectangle((18,18,882,282),radius=64,fill=(8,12,18,224),outline=(255,255,255,48),width=3)
-          d.ellipse((62,67,230,235),outline=(255,255,255,230),width=12)
-          d.polygon([(132,112),(132,190),(190,151)],fill=(255,255,255,235))
-          d.text((830,72),'خلف الشاشة',font=font,fill=(255,255,255,255),anchor='ra',direction='rtl')
-          d.text((825,190),'قصص ما وراء التقنية',font=small,fill=(220,225,232,220),anchor='ra',direction='rtl')
-          im.save(dst,'PNG',optimize=True)
-          with Image.open(dst) as check:
-              check.verify()
+          DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/source.mp4)"
+          LOG="$(ffmpeg -hide_banner -i /tmp/source.mp4 -af silencedetect=noise=-42dB:d=1.25 -f null - 2>&1 || true)"
+          START="$(printf '%s\n' "$LOG" | awk -F 'silence_start: ' '/silence_start:/ {v=$2} END {print v}' | awk '{print $1}')"
+          END="$(printf '%s\n' "$LOG" | awk -F 'silence_end: ' '/silence_end:/ {v=$2} END {print v}' | awk '{print $1}')"
+          CUT="$(python3 - "$DUR" "$START" "$END" <<'PY'
+          import sys
+          dur=float(sys.argv[1])
+          try: start=float(sys.argv[2])
+          except: start=None
+          try: end=float(sys.argv[3])
+          except: end=None
+          cut=dur
+          if start is not None and end is not None and abs(dur-end) < 0.6 and dur-start >= 1.25:
+              cut=min(dur, start+0.12)
+          print(f'{cut:.3f}')
           PY
-          test -s /tmp/khalf-logo.png
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 /tmp/khalf-logo.png
+          )"
+          echo "source_duration=$DUR"
+          echo "content_cut=$CUT"
+          echo "cut=$CUT" >> "$GITHUB_OUTPUT"
 
-      - name: Apply watermark
+      - name: Apply approved minimal watermark
         shell: bash
         run: |
+          CUT='${{ steps.trim.outputs.cut }}'
           ffmpeg -hide_banner -loglevel error -y \
-            -i /tmp/source.mp4 -loop 1 -i /tmp/khalf-logo.png \
-            -filter_complex "[1:v]scale=300:-2,format=rgba,colorchannelmixer=aa=0.72[logo];[0:v][logo]overlay=W-w-36:36:format=auto:shortest=1[v]" \
-            -map "[v]" -map 0:a? -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
-            -c:a aac -b:a 160k -movflags +faststart -shortest /tmp/main.mp4
+            -i /tmp/source.mp4 -loop 1 -i /tmp/watermark.png \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30[base];[1:v]scale=180:-2,format=rgba,colorchannelmixer=aa=0.78[wm];[base][wm]overlay=W-w-28:28:format=auto:shortest=1[v]" \
+            -map "[v]" -map 0:a:0 -t "$CUT" \
+            -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
+            -c:a aac -ar 48000 -ac 2 -b:a 160k -movflags +faststart /tmp/main.mp4
           test -s /tmp/main.mp4
-          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/main.mp4
 
-      - name: Build outro
+      - name: Build approved cinematic end card
         shell: bash
         run: |
           ffmpeg -hide_banner -loglevel error -y \
-            -loop 1 -i /tmp/khalf-logo.png \
+            -loop 1 -i /tmp/outro.jpg \
             -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
-            -t 2 \
-            -vf "scale=760:760:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,fade=t=in:st=0:d=0.3,fade=t=out:st=1.6:d=0.4,format=yuv420p" \
-            -c:v libx264 -preset veryfast -crf 20 -r 30 -c:a aac -b:a 160k -shortest /tmp/outro.mp4
+            -t 2.2 \
+            -filter_complex "[0:v]scale=1040:-2:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,fade=t=in:st=0:d=0.28,fade=t=out:st=1.82:d=0.38,format=yuv420p[v]" \
+            -map "[v]" -map 1:a:0 -c:v libx264 -preset veryfast -crf 19 \
+            -c:a aac -ar 48000 -ac 2 -b:a 160k -shortest /tmp/outro.mp4
           test -s /tmp/outro.mp4
 
-      - name: Append cinematic outro
+      - name: Create final video without frozen tail
         shell: bash
         run: |
-          printf "file '/tmp/main.mp4'\nfile '/tmp/outro.mp4'\n" > /tmp/list.txt
-          ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i /tmp/list.txt \
-            -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 160k \
-            -movflags +faststart /tmp/heygen-branded.mp4
+          ffmpeg -hide_banner -loglevel error -y \
+            -i /tmp/main.mp4 -i /tmp/outro.mp4 \
+            -filter_complex "[0:v]setsar=1,fps=30[v0];[1:v]setsar=1,fps=30[v1];[0:a]aresample=48000,aformat=channel_layouts=stereo[a0];[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]" \
+            -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
+            -c:a aac -ar 48000 -ac 2 -b:a 160k -movflags +faststart /tmp/heygen-branded.mp4
           test -s /tmp/heygen-branded.mp4
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/heygen-branded.mp4
 
@@ -111,6 +116,8 @@ jobs:
         run: |
           test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets missing'; exit 1; }
           RESPONSE="$(curl --fail --silent --show-error --retry 3 --retry-delay 2 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@/tmp/heygen-branded.mp4" -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الشاشة | ${{ steps.request.outputs.title }}\n✅ النسخة الجديدة بالشعار المعتمد")"
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "video=@/tmp/heygen-branded.mp4" \
+            -F "supports_streaming=true" \
+            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ Watermark الجديد + النهاية السينمائية المعتمدة + إزالة التوقف النهائي")"
           echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
