@@ -79,7 +79,6 @@ def scene_plan(story: Path, words: list[dict], duration: float) -> list[dict]:
                 previous_word = end_word
             boundaries.append(duration)
             return [{'start': boundaries[i], 'end': boundaries[i + 1]} for i in range(len(boundaries) - 1)]
-
     paragraphs = [p.strip() for p in story.joinpath('script_ar.txt').read_text(encoding='utf-8').split('\n\n') if p.strip()]
     if len(paragraphs) < 2:
         raise SystemExit('STRICT V3 requires multiple narration paragraphs or an authored storyboard.')
@@ -167,17 +166,17 @@ def main() -> None:
     story=find_story(args.id); slug=story.name
     output=Path('output'); output.mkdir(exist_ok=True)
     log_dir=output/'diagnostics'/slug; log_dir.mkdir(parents=True,exist_ok=True)
-    voice=output/f'{slug}-voice.mp3'; timing=output/f'{slug}-word-boundaries.json'; logo=Path('assets')/'brand'/'logo.webp'
+    voice=output/f'{slug}-voice.mp3'; timing=output/f'{slug}-word-boundaries.json'; logo=Path('assets')/'brand'/'logo.png'
     if not voice.exists(): raise SystemExit('Missing narration audio.')
-    if not logo.exists(): raise SystemExit('STRICT V3 requires the approved brand logo asset.')
+    if not logo.exists(): raise SystemExit('STRICT V3 requires the stable PNG brand logo asset.')
+    probe_dimensions(logo)
     duration=probe_duration(voice); words,timing_source=load_timing(timing); scenes=scene_plan(story,words,duration)
     subtitle=output/f'{slug}.ass'; write_ass(words,subtitle)
     bg,masters=make_background(slug,scenes,output,log_dir)
     sub=str(subtitle).replace(':',r'\:').replace("'",r"\'")
     out=output/f'{slug}-preview.mp4'
-    # Single lightweight final encode. Static logo is decoded once; subtitles are burned during the same pass.
-    fc=f"[0:v]subtitles='{sub}'[base];[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[lg];[base][lg]overlay=W-w-38:42:format=auto[v]"
-    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(bg),'-i',str(voice),'-i',str(logo),'-filter_complex',fc,'-map','[v]','-map','1:a:0','-t',f'{duration:.3f}','-c:v','libx264','-preset','ultrafast','-crf','22','-threads','0','-c:a','aac','-b:a','128k','-pix_fmt','yuv420p','-movflags','+faststart',str(out)], 'final-compose', log_dir, timeout=420)
+    fc=f"[0:v]subtitles='{sub}'[base];[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[lg];[base][lg]overlay=W-w-38:42:shortest=1,format=yuv420p[v]"
+    run_ffmpeg(['ffmpeg','-nostdin','-y','-hide_banner','-loglevel','warning','-i',str(bg),'-i',str(voice),'-loop','1','-framerate','1','-i',str(logo),'-filter_complex',fc,'-map','[v]','-map','1:a:0','-t',f'{duration:.3f}','-c:v','libx264','-preset','ultrafast','-crf','22','-threads','0','-c:a','aac','-b:a','128k','-pix_fmt','yuv420p','-movflags','+faststart',str(out)], 'final-compose', log_dir, timeout=420)
     final_duration=probe_duration(out)
     if final_duration < max(1.0,duration-0.75): raise SystemExit(f'Final video unexpectedly short: {final_duration:.3f}s vs narration {duration:.3f}s')
     (output/f'{slug}-render.json').write_text(json.dumps({'slug':slug,'architecture':'V3_GOLDEN_STRICT','renderer_mode':'ROBUST_STAGED_V1','duration':round(final_duration,3),'scene_count':len(scenes),'narration_timing':timing_source,'scene_timing':'NARRATION_PARAGRAPH_ALIGNED','all_visuals_are_approved_masters':True,'brand_name':'خلف الشاشة','brand_logo':str(logo),'brand_logo_position':'top_right','visuals':masters,'forbidden_fallbacks_enabled':False,'diagnostics_dir':str(log_dir)},ensure_ascii=False,indent=2),encoding='utf-8')
