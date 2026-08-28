@@ -1,2 +1,2 @@
 007
-Run isolated V3.2 test with deliberately visible cinematic motion while preserving the stable V3 production architecture.
+Run V3.2 from the permanent GitHub visual library only. No FLUX, Hugging Face, Kaggle, paid image API, or image-generation credits.
