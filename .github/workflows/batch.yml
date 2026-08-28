@@ -37,11 +37,43 @@ jobs:
 
       - name: Install V3 production dependencies
         run: |
-          python -m pip install --upgrade pip edge-tts
+          python -m pip install --upgrade pip edge-tts pillow
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-core jq
           ffmpeg -version | head -n 3
-          ffmpeg -hide_banner -filters | grep -E ' subtitles | overlay | scale | crop ' || true
+
+      - name: Normalize approved brand logo to PNG
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          src = Path('assets/brand/logo.webp')
+          dst = Path('assets/brand/logo.png')
+          if not src.exists():
+              raise SystemExit('BLOCKED: approved logo.webp missing')
+          with Image.open(src) as im:
+              im.load()
+              if im.width < 64 or im.height < 64:
+                  raise SystemExit(f'BLOCKED: invalid logo dimensions {im.width}x{im.height}')
+              if im.mode not in ('RGB', 'RGBA'):
+                  im = im.convert('RGBA')
+              im.save(dst, 'PNG', optimize=True)
+          with Image.open(dst) as check:
+              check.verify()
+          print(f'Brand logo normalized: {dst}')
+          PY
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/render_item.py')
+          s = p.read_text(encoding='utf-8')
+          old = "logo = Path('assets') / 'brand' / 'logo.webp'"
+          new = "logo = Path('assets') / 'brand' / 'logo.png'"
+          if old not in s:
+              raise SystemExit('Renderer logo reference not found')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+          PY
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 assets/brand/logo.png
 
       - name: Resolve story
         id: story
@@ -103,6 +135,7 @@ jobs:
             output/*-background.mp4
             output/*-segments/
             output/*.ass
+            assets/brand/logo.png
 
       - name: Run technical quality gate
         run: python scripts/qc_video.py --id '${{ steps.story.outputs.id }}' --min-duration 35 --max-duration 70
