@@ -29,7 +29,7 @@ jobs:
           URL="$(cat /tmp/video_url)"
           curl --fail --location --retry 3 --retry-delay 2 "$URL" -o /tmp/heygen-review.mp4
           test -s /tmp/heygen-review.mp4
-          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /tmp/heygen-review.mp4
+          echo "Downloaded $(du -h /tmp/heygen-review.mp4 | cut -f1) HeyGen review video."
 
       - name: Send HeyGen review to Telegram
         env:
@@ -38,10 +38,10 @@ jobs:
         shell: bash
         run: |
           test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets unavailable'; exit 1; }
-          curl --fail --silent --show-error \
+          RESPONSE="$(curl --fail --silent --show-error \
             -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
             -F "video=@/tmp/heygen-review.mp4" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 HeyGen للمراجعة | ${{ steps.request.outputs.title }}\n✅ النسخة الأولى من Content Factory\n\nرد بالموافقة أو الملاحظات قبل النشر." >/dev/null
-          echo 'HeyGen video delivered to Telegram successfully.'
+            -F "caption=🎬 HeyGen للمراجعة | ${{ steps.request.outputs.title }}\n✅ النسخة الأولى من Content Factory\n\nرد بالموافقة أو الملاحظات قبل النشر.")"
+          echo "$RESPONSE" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
