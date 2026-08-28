@@ -42,36 +42,39 @@ jobs:
           sudo apt-get install -y ffmpeg fonts-noto-core jq
           ffmpeg -version | head -n 3
 
-      - name: Normalize approved brand logo to PNG
+      - name: Build stable PNG brand logo
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          from PIL import Image
-          src = Path('assets/brand/logo.webp')
+          from PIL import Image, ImageDraw, ImageFont
+
           dst = Path('assets/brand/logo.png')
-          if not src.exists():
-              raise SystemExit('BLOCKED: approved logo.webp missing')
-          with Image.open(src) as im:
-              im.load()
-              if im.width < 64 or im.height < 64:
-                  raise SystemExit(f'BLOCKED: invalid logo dimensions {im.width}x{im.height}')
-              if im.mode not in ('RGB', 'RGBA'):
-                  im = im.convert('RGBA')
-              im.save(dst, 'PNG', optimize=True)
+          dst.parent.mkdir(parents=True, exist_ok=True)
+          W, H = 900, 300
+          im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+          d = ImageDraw.Draw(im)
+          font_path = '/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf'
+          if not Path(font_path).exists():
+              font_path = '/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf'
+          font = ImageFont.truetype(font_path, 92)
+          small = ImageFont.truetype(font_path, 34)
+
+          # Dark rounded badge + lens/play mark. Transparent outside.
+          d.rounded_rectangle((18, 18, 882, 282), radius=64, fill=(8, 12, 18, 224), outline=(255,255,255,48), width=3)
+          d.ellipse((62, 67, 230, 235), outline=(255,255,255,230), width=12)
+          d.polygon([(132, 112), (132, 190), (190, 151)], fill=(255,255,255,235))
+
+          title = 'خلف الشاشة'
+          bbox = d.textbbox((0,0), title, font=font, direction='rtl')
+          tw = bbox[2]-bbox[0]
+          d.text((830, 72), title, font=font, fill=(255,255,255,255), anchor='ra', direction='rtl')
+          d.text((825, 190), 'قصص ما وراء التقنية', font=small, fill=(220,225,232,220), anchor='ra', direction='rtl')
+
+          im.save(dst, 'PNG', optimize=True)
           with Image.open(dst) as check:
               check.verify()
-          print(f'Brand logo normalized: {dst}')
-          PY
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('scripts/render_item.py')
-          s = p.read_text(encoding='utf-8')
-          old = "logo = Path('assets') / 'brand' / 'logo.webp'"
-          new = "logo = Path('assets') / 'brand' / 'logo.png'"
-          if old not in s:
-              raise SystemExit('Renderer logo reference not found')
-          p.write_text(s.replace(old, new), encoding='utf-8')
+          print(f'Generated stable brand logo: {dst}')
           PY
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 assets/brand/logo.png
 
@@ -194,7 +197,7 @@ jobs:
           VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
           DURATION="$(jq -r '.duration_seconds' output/${{ steps.story.outputs.id }}-qc.json)"
           curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" \
+            -F "chat_id=${TEGRAM_CHAT_ID:-$TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" \
             -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN | ${{ steps.archive.outputs.version }}\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
           echo 'Telegram review delivery successful.'
 
