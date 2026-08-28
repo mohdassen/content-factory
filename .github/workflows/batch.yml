@@ -6,7 +6,9 @@ on:
     branches: [main]
     paths:
       - 'content/**'
+      - 'assets/**'
       - 'scripts/**'
+      - 'docs/ai-first-architecture.md'
       - '.github/workflows/batch.yml'
 
 jobs:
@@ -42,14 +44,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip edge-tts
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-dejavu-core jq
-      - name: Generate Arabic narration
+          sudo apt-get install -y ffmpeg fonts-noto-core jq
+      - name: Generate Arabic narration and word timing
         run: python scripts/generate_voice_item.py --id "${{ matrix.item.id }}"
-      - name: Fetch cinematic scene visuals
+      - name: Prepare visual source
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-        run: python scripts/fetch_visuals.py --id "${{ matrix.item.id }}"
-      - name: Render vertical MP4
+        run: |
+          if find "assets/stories/${{ matrix.item.slug }}/scenes" -maxdepth 1 -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) -print -quit 2>/dev/null | grep -q .; then
+            echo "Approved AI master scenes found; stock fetch skipped."
+          else
+            echo "No approved master scenes in repository; preparing fallback visuals for non-golden items."
+            python scripts/fetch_visuals.py --id "${{ matrix.item.id }}"
+          fi
+      - name: Render V3 golden vertical MP4
         run: python scripts/render_item.py --id "${{ matrix.item.id }}"
       - name: Run technical quality gate
         run: python scripts/qc_video.py --id "${{ matrix.item.id }}" --min-duration 35 --max-duration 60
@@ -79,6 +87,10 @@ jobs:
         with:
           name: ${{ matrix.item.slug }}-preview
           path: output/${{ matrix.item.slug }}-preview.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.item.slug }}-render-metadata
+          path: output/${{ matrix.item.slug }}-render.json
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.item.slug }}-qc
