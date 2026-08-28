@@ -31,15 +31,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
 
-      - name: Decode approved brand assets
+      - name: Validate approved repository brand asset
         shell: bash
         run: |
-          test -s branding/watermark.b64 || { echo 'Missing watermark asset'; exit 1; }
-          test -s branding/outro.b64 || { echo 'Missing outro asset'; exit 1; }
-          base64 -d branding/watermark.b64 > /tmp/watermark.png
-          base64 -d branding/outro.b64 > /tmp/outro.jpg
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,pix_fmt -of default=nw=1 /tmp/watermark.png
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of default=nw=1 /tmp/outro.jpg
+          BRAND='assets/brand/logo.webp'
+          test -s "$BRAND" || { echo 'Missing approved brand asset'; exit 1; }
+          cp "$BRAND" /tmp/brand.webp
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 /tmp/brand.webp
 
       - name: Download and validate HeyGen video
         shell: bash
@@ -78,7 +76,7 @@ jobs:
         run: |
           CUT='${{ steps.trim.outputs.cut }}'
           ffmpeg -hide_banner -loglevel error -y \
-            -i /tmp/source.mp4 -loop 1 -i /tmp/watermark.png \
+            -i /tmp/source.mp4 -loop 1 -i /tmp/brand.webp \
             -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30[base];[1:v]scale=180:-2,format=rgba,colorchannelmixer=aa=0.78[wm];[base][wm]overlay=W-w-28:28:format=auto:shortest=1[v]" \
             -map "[v]" -map 0:a:0 -t "$CUT" \
             -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
@@ -89,13 +87,20 @@ jobs:
         shell: bash
         run: |
           ffmpeg -hide_banner -loglevel error -y \
-            -loop 1 -i /tmp/outro.jpg \
+            -loop 1 -framerate 30 -i /tmp/brand.webp \
+            -f lavfi -i color=c=0x05070b:s=1080x1920:r=30:d=2.6 \
             -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
-            -t 2.2 \
-            -filter_complex "[0:v]scale=1040:-2:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,fade=t=in:st=0:d=0.28,fade=t=out:st=1.82:d=0.38,format=yuv420p[v]" \
-            -map "[v]" -map 1:a:0 -c:v libx264 -preset veryfast -crf 19 \
+            -filter_complex "[0:v]scale=820:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=0.32:alpha=1,fade=t=out:st=2.18:d=0.42:alpha=1[logo];[1:v]vignette=PI/5:eval=frame[bg];[bg][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
+            -map "[v]" -map 2:a:0 -t 2.6 \
+            -c:v libx264 -preset veryfast -crf 19 -pix_fmt yuv420p \
             -c:a aac -ar 48000 -ac 2 -b:a 160k -shortest /tmp/outro.mp4
           test -s /tmp/outro.mp4
+          ODUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/outro.mp4)"
+          python3 - "$ODUR" <<'PY'
+          import sys
+          d=float(sys.argv[1]); assert d >= 2.35, f'Outro too short: {d}'
+          print('Outro verified:', d)
+          PY
 
       - name: Create final video without frozen tail
         shell: bash
@@ -106,7 +111,14 @@ jobs:
             -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
             -c:a aac -ar 48000 -ac 2 -b:a 160k -movflags +faststart /tmp/heygen-branded.mp4
           test -s /tmp/heygen-branded.mp4
-          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/heygen-branded.mp4
+          FINAL="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/heygen-branded.mp4)"
+          MAIN="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/main.mp4)"
+          python3 - "$FINAL" "$MAIN" <<'PY'
+          import sys
+          final=float(sys.argv[1]); main=float(sys.argv[2])
+          assert final-main >= 2.3, f'Final file does not contain full outro: final={final}, main={main}'
+          print('Final cinematic outro verified in joined MP4')
+          PY
 
       - name: Send branded review to Telegram
         env:
@@ -119,5 +131,5 @@ jobs:
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
             -F "video=@/tmp/heygen-branded.mp4" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ Watermark الجديد + النهاية السينمائية المعتمدة + إزالة التوقف النهائي")"
+            -F "caption=🎬 خلف الشاشة | ${{ steps.request.outputs.title }}\n✅ الشعار المعتمد + النهاية السينمائية + فحص النهاية PASS")"
           echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
