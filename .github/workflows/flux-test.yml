@@ -2,6 +2,9 @@ name: FLUX 9x16 Quality Test
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.flux-trigger/**'
 
 jobs:
   flux-test:
@@ -23,17 +26,9 @@ jobs:
           python - <<'PY'
           import os
           from huggingface_hub import InferenceClient
-
           prompt = '''Vertical 9:16 cinematic technology documentary frame, photorealistic early 1990s product design laboratory. A period-correct handheld pen-based personal digital assistant inspired by the 1993 Apple Newton MessagePad resting in a person's hand, stylus interacting with the monochrome touchscreen, authentic early-1990s industrial design and office environment, dramatic practical lighting, premium documentary cinematography, shallow depth of field, realistic skin and materials, subtle film grain, rich dynamic range, strong foreground and background separation, centered portrait-safe composition, historically believable, no advertising layout. Absolutely no visible text, letters, numbers, captions, subtitles, UI labels, timestamps, added logos, watermarks, collage, grid, storyboard panels, presentation slides, or decorative typography.'''
-
           client = InferenceClient(provider='auto', api_key=os.environ['HF_TOKEN'])
-          image = client.text_to_image(
-              prompt,
-              model='black-forest-labs/FLUX.1-schnell',
-              width=768,
-              height=1360,
-              num_inference_steps=4,
-          )
+          image = client.text_to_image(prompt, model='black-forest-labs/FLUX.1-schnell', width=768, height=1360, num_inference_steps=4)
           image.save('output/flux-test/006-apple-newton-flux-9x16.png')
           print('Generated FLUX.1-schnell test image:', image.size)
           PY
