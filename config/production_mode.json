@@ -1,0 +1,10 @@
+{
+  "architecture": "V3_GOLDEN_STRICT",
+  "production_locked": true,
+  "approved_master_only": true,
+  "allow_stock_fallback": false,
+  "allow_storyboard_as_source": false,
+  "allow_motion_graphics_fallback": false,
+  "telegram_delivery_requires_strict_v3": true,
+  "notes": "Production fail-closed. If approved independent V3 masters or real narration timing are missing, render/delivery must stop."
+}
