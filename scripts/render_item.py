@@ -114,7 +114,6 @@ WrapStyle: 2
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
 Style: Arabic,Noto Sans Arabic,54,&H00FFFFFF,&H00FFFFFF,&HCC000000,&H00000000,-1,0,0,0,100,100,0,0,1,4,0,2,90,90,235,1
-Style: Brand,Noto Sans Arabic,28,&H80FFFFFF,&H80FFFFFF,&H66000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,9,45,45,58,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -125,7 +124,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         events.append(
             f"Dialogue: 0,{ass_time(row['start'])},{ass_time(row['end'])},Arabic,,0,0,0,,{{\\fad(70,90)}}{text}"
         )
-    events.append(f"Dialogue: 1,0:00:00.00,{ass_time(duration)},Brand,,0,0,0,,خلف الشاشة")
     path.write_text(header + '\n'.join(events) + '\n', encoding='utf-8')
 
 
@@ -164,7 +162,6 @@ def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, 
         segment = seg_dir / f'{idx:02}.mp4'
         motion = MOTION_PRESETS[(idx - 1) % len(MOTION_PRESETS)]
 
-        # Tiny cinematic fades; source remains full-frame and aspect-preserved.
         fade_in = 0.10 if idx > 1 else 0.18
         fade_out = 0.10 if idx < len(scenes) else 0.20
         fade_out_start = max(0.0, length - fade_out)
@@ -206,8 +203,11 @@ def main() -> None:
 
     voice = output / f'{slug}-voice.mp3'
     timing = output / f'{slug}-word-boundaries.json'
+    logo = Path('assets') / 'brand' / 'logo.webp'
     if not voice.exists():
         raise SystemExit('Missing narration audio.')
+    if not logo.exists():
+        raise SystemExit('STRICT V3 requires the approved brand logo asset.')
 
     duration = probe_duration(voice)
     words = load_words(timing)
@@ -219,16 +219,20 @@ def main() -> None:
     bg, masters = make_background(slug, scenes, output)
 
     sub = str(subtitle).replace(':', r'\:').replace("'", r"\'")
-    vf = (
-        f"subtitles='{sub}',"
+    filter_complex = (
+        f"[0:v]subtitles='{sub}',"
         f"drawbox=x=70:y=1830:w='940*t/{duration:.6f}':h=4:color=white@0.30:t=fill,"
-        "format=yuv420p"
+        "format=rgba[base];"
+        "[2:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.82[logo];"
+        "[base][logo]overlay=W-w-38:42:format=auto,format=yuv420p[v]"
     )
     out = output / f'{slug}-preview.mp4'
     subprocess.run([
         'ffmpeg', '-y', '-i', str(bg), '-i', str(voice),
-        '-vf', vf, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=7',
-        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
+        '-framerate', '30', '-loop', '1', '-i', str(logo),
+        '-filter_complex', filter_complex,
+        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=7',
+        '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264',
         '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-b:a', '192k',
         '-shortest', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(out)
     ], check=True)
@@ -241,6 +245,9 @@ def main() -> None:
         'scene_count': len(scenes),
         'narration_timing': 'REAL_WORD_BOUNDARIES',
         'all_visuals_are_approved_masters': True,
+        'brand_name': 'خلف الشاشة',
+        'brand_logo': str(logo),
+        'brand_logo_position': 'top_right',
         'visuals': masters,
         'forbidden_fallbacks_enabled': False,
     }, ensure_ascii=False, indent=2), encoding='utf-8')
