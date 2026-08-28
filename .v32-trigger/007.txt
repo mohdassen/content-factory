@@ -1,0 +1,2 @@
+007
+Run isolated V3.2 test with deliberately visible cinematic motion while preserving the stable V3 production architecture.
