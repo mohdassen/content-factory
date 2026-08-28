@@ -1,0 +1,2 @@
+005
+Permanent brand logo normalization: Pillow converts approved WebP to validated PNG before render.
