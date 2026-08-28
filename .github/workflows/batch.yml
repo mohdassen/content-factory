@@ -6,7 +6,7 @@ on:
       content_id:
         description: 'Content ID to render (strict V3 masters)'
         required: true
-        default: '005'
+        default: '006'
   push:
     paths:
       - '.factory-trigger/**'
@@ -22,7 +22,7 @@ jobs:
           python-version: '3.12'
       - name: Install production dependencies
         run: |
-          python -m pip install --upgrade pip edge-tts pillow
+          python -m pip install --upgrade pip edge-tts pillow huggingface_hub
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core jq unzip
       - name: Enforce production architecture lock
         run: |
@@ -48,7 +48,7 @@ jobs:
         id: story
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then ID='${{ inputs.content_id }}'; else ID="$(printf '%s' '${{ github.event.head_commit.message }}' | grep -oE '[0-9]{3}' | head -n1)"; fi
-          test -n "$ID" || ID=005
+          test -n "$ID" || ID=006
           STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"; test -n "$STORY_DIR"
           echo "id=$ID" >> "$GITHUB_OUTPUT"; echo "slug=$(basename "$STORY_DIR")" >> "$GITHUB_OUTPUT"
       - name: Recover 005 approved masters
@@ -63,15 +63,13 @@ jobs:
             rm -rf /tmp/r28; mkdir -p /tmp/r28; unzip -q /tmp/r28.zip -d /tmp/r28
             for N in 01 02 03 04 05 06 07; do ffmpeg -hide_banner -loglevel error -y -ss 0.10 -i "/tmp/r28/005-google-glass-segments/${N}.mp4" -frames:v 1 "$DIR/${N}.png"; done
           fi
-      - name: Generate independent AI masters when missing
+      - name: Generate independent FLUX masters when missing
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          IMAGE_MODEL: gpt-image-1
-          IMAGE_SIZE: 1024x1536
-          IMAGE_QUALITY: high
+          HF_TOKEN: ${{ secrets.HF_Token }}
+          IMAGE_MODEL: black-forest-labs/FLUX.1-schnell
         run: |
           DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"; COUNT=0; [ -d "$DIR" ] && COUNT="$(find "$DIR" -maxdepth 1 -type f -name '*.png' | wc -l)"
-          if [ "$COUNT" -lt 6 ]; then python scripts/generate_ai_masters.py --id '${{ steps.story.outputs.id }}'; fi
+          if [ "$COUNT" -lt 6 ]; then python scripts/generate_flux_masters.py --id '${{ steps.story.outputs.id }}'; fi
       - name: Generate narration
         run: python scripts/generate_voice_item.py --id '${{ steps.story.outputs.id }}'
       - name: Render video with mandatory cinematic outro
@@ -93,14 +91,17 @@ jobs:
         run: |
           test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID"
           VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
-          curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 Content Factory | نسخة الشعار السينمائي النهائية | ${{ steps.story.outputs.slug }}" >/dev/null
-          echo 'Telegram final video delivery successful.'
+          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 خلف الشاشة | ${{ steps.story.outputs.slug }}")"
+          echo "$RESPONSE" | jq -e '.ok == true' >/dev/null
+          echo "Telegram final video delivery successful. message_id=$(echo "$RESPONSE" | jq -r '.result.message_id')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ steps.story.outputs.slug }}-cinematic-outro-${{ github.run_number }}
+          name: ${{ steps.story.outputs.slug }}-flux-cinematic-${{ github.run_number }}
           retention-days: 30
           if-no-files-found: warn
           path: |
             output/
+            assets/stories/${{ steps.story.outputs.slug }}/scenes/
+            assets/stories/${{ steps.story.outputs.slug }}/masters-manifest.json
             assets/brand/logo.png
