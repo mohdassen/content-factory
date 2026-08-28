@@ -1,2 +1,2 @@
 007
-Run V3.2 from the permanent GitHub visual library only. No FLUX, Hugging Face, Kaggle, paid image API, or image-generation credits.
+Retry V3.2 from permanent GitHub visual library after FFmpeg zoompan compatibility fix. No image API credits.
