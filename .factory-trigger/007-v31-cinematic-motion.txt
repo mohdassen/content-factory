@@ -1,0 +1,2 @@
+007
+Retry production with V3.1 cinematic motion enabled for content id 007+ while preserving V3 Golden generation, timing, subtitles, outro, QC, and Telegram delivery.
