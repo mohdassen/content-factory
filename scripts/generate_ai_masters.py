@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# V3 strict master generator: story 005 retry marker.
 import argparse, base64, json, os, pathlib, re, time, urllib.request, urllib.error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -69,8 +70,6 @@ def build_scene_inputs(story):
     if len(paragraphs) < 6:
         raise SystemExit("Need at least 6 narration paragraphs to derive V3 scenes")
 
-    # One independently generated master per narration paragraph. The Arabic narration is
-    # context only; the prompt explicitly forbids rendering any text inside the image.
     derived = [
         {
             "narration": p,
