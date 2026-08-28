@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse, json, os, pathlib, re, time
 from huggingface_hub import InferenceClient
+from PIL import Image
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -11,6 +12,17 @@ def find_story(content_id):
 
 def clean_paragraphs(text):
     return [re.sub(r'\s+',' ',p).strip() for p in re.split(r'\n\s*\n',text) if p.strip()]
+
+def normalize_for_renderer(image):
+    w,h=image.size
+    if h <= w:
+        raise RuntimeError(f'FLUX returned non-portrait image: {w}x{h}')
+    min_w,min_h=900,1400
+    if w>=min_w and h>=min_h:
+        return image
+    scale=max(min_w/w,min_h/h)
+    nw=max(min_w,round(w*scale)); nh=max(min_h,round(h*scale))
+    return image.resize((nw,nh),Image.Resampling.LANCZOS)
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--id',required=True); a=ap.parse_args()
@@ -32,9 +44,12 @@ def main():
                 'ABSOLUTELY NO visible text, letters, numbers, captions, subtitles, UI labels, timestamps, added logos, watermarks, collage, grid, storyboard panels, presentation slides or decorative typography.')
         print(f'FLUX GENERATE {i}/{len(paragraphs)}')
         image=client.text_to_image(prompt,model=model,width=768,height=1360,num_inference_steps=4)
+        original=image.size
+        image=normalize_for_renderer(image)
         image.save(dest,'PNG',optimize=True)
+        print(f'SAVED {dest} original={original[0]}x{original[1]} normalized={image.size[0]}x{image.size[1]}')
         time.sleep(1)
-    manifest={'architecture':'V3_GOLDEN_STRICT','story':slug,'source':'independent_flux_generation','model':model,'scene_count':len(list(out.glob('*.png'))),'image_text_allowed':False,'target_frame':'1080x1920_9x16'}
+    manifest={'architecture':'V3_GOLDEN_STRICT','story':slug,'source':'independent_flux_generation','model':model,'scene_count':len(list(out.glob('*.png'))),'image_text_allowed':False,'target_frame':'1080x1920_9x16','renderer_normalization':'portrait_upscale_only_no_stretch'}
     (out.parent/'masters-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(manifest,ensure_ascii=False))
 if __name__=='__main__': main()
