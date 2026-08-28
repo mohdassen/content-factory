@@ -1,0 +1,3 @@
+006
+FLUX.1-schnell approved for production masters.
+Generate independent 9:16 scenes, render V3 Golden, QC, and deliver to Telegram.
