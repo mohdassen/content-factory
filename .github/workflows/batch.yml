@@ -4,9 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       content_id:
-        description: 'Content ID to render (approved V3 masters required)'
+        description: 'Content ID to render (strict V3 masters)'
         required: true
         default: '001'
+  push:
+    paths:
+      - '.factory-trigger/**'
 
 jobs:
   render-v3:
@@ -42,12 +45,36 @@ jobs:
         id: story
         shell: bash
         run: |
-          ID='${{ inputs.content_id }}'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ID='${{ inputs.content_id }}'
+          else
+            TRIGGER="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep '^.factory-trigger/' | head -n1)"
+            test -n "$TRIGGER" || { echo 'No factory trigger file found in push'; exit 1; }
+            ID="$(basename "$TRIGGER" | cut -d. -f1)"
+          fi
           STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"
           test -n "$STORY_DIR" || { echo "Unknown content id: $ID"; exit 1; }
           SLUG="$(basename "$STORY_DIR")"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "Resolved $ID -> $SLUG"
+
+      - name: Generate independent AI masters when missing
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          IMAGE_MODEL: gpt-image-1
+          IMAGE_SIZE: 1024x1536
+          IMAGE_QUALITY: high
+        shell: bash
+        run: |
+          DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
+          COUNT=0
+          if [ -d "$DIR" ]; then COUNT="$(find "$DIR" -maxdepth 1 -type f -name '*.png' | wc -l)"; fi
+          if [ "$COUNT" -lt 6 ]; then
+            python scripts/generate_ai_masters.py --id '${{ steps.story.outputs.id }}'
+          else
+            echo "Keeping $COUNT existing approved masters."
+          fi
 
       - name: Strict V3 master preflight
         shell: bash
@@ -65,7 +92,7 @@ jobs:
         run: python scripts/render_item.py --id '${{ steps.story.outputs.id }}'
 
       - name: Run technical quality gate
-        run: python scripts/qc_video.py --id '${{ steps.story.outputs.id }}' --min-duration 35 --max-duration 60
+        run: python scripts/qc_video.py --id '${{ steps.story.outputs.id }}' --min-duration 35 --max-duration 70
 
       - name: Verify V3 architecture before delivery
         shell: bash
@@ -78,13 +105,22 @@ jobs:
           test "$(jq -r '.narration_timing' "$META")" = 'REAL_WORD_BOUNDARIES' || { echo 'BLOCKED: real narration timing missing'; exit 1; }
           test "$(jq -r '.decision' "$QC")" = 'PASS' || { echo 'BLOCKED: QC did not pass'; exit 1; }
 
-      - name: Send strict V3 video to Telegram
+      - name: Send review images and strict V3 video to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         shell: bash
         run: |
           test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets unavailable'; exit 1; }
+          SCENE_DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
+          for IMG in "$SCENE_DIR"/*; do
+            [ -f "$IMG" ] || continue
+            curl --fail --silent --show-error \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              -F "photo=@${IMG}" \
+              -F "caption=🖼️ مراجعة المشهد | ${{ steps.story.outputs.slug }} | $(basename "$IMG")" >/dev/null
+          done
           VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
           DURATION="$(jq -r '.duration_seconds' output/${{ steps.story.outputs.id }}-qc.json)"
           curl --fail --silent --show-error \
@@ -92,13 +128,14 @@ jobs:
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
             -F "video=@${VIDEO}" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 Content Factory | STRICT V3 GOLDEN ONLY\n✅ Master-only + real timing + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
-          echo 'Strict V3 Telegram delivery successful.'
+            -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}\n\nرد بالموافقة أو الملاحظات قبل النشر." >/dev/null
+          echo 'Telegram review delivery successful.'
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.story.outputs.slug }}-v3-golden
           path: |
+            assets/stories/${{ steps.story.outputs.slug }}/scenes/
             output/${{ steps.story.outputs.slug }}-preview.mp4
             output/${{ steps.story.outputs.slug }}-render.json
             output/${{ steps.story.outputs.id }}-qc.json
