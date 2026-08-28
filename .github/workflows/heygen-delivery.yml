@@ -8,6 +8,7 @@ on:
 jobs:
   deliver:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -26,38 +27,44 @@ jobs:
       - name: Download HeyGen video
         shell: bash
         run: |
-          URL="$(cat /tmp/video_url)"
-          curl --fail --location --retry 3 --retry-delay 2 "$URL" -o /tmp/heygen-review.mp4
-          test -s /tmp/heygen-review.mp4
-          echo "Downloaded $(du -h /tmp/heygen-review.mp4 | cut -f1) HeyGen review video."
+          curl --fail --location --retry 3 --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
+          test -s /tmp/source.mp4
 
       - name: Install FFmpeg
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
 
-      - name: Apply Khalf Alraqam branding
+      - name: Apply watermark
         shell: bash
         run: |
           test -s branding/khalf-alraqam-logo.jpg || { echo 'Missing brand asset'; exit 1; }
-          ffmpeg -y \
-            -i /tmp/heygen-review.mp4 \
+          ffmpeg -hide_banner -loglevel error -y \
+            -i /tmp/source.mp4 -i branding/khalf-alraqam-logo.jpg \
+            -filter_complex "[1:v]scale=150:-2,format=rgba,colorchannelmixer=aa=0.72[logo];[0:v][logo]overlay=W-w-36:36:format=auto[v]" \
+            -map "[v]" -map 0:a? -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
+            -c:a aac -b:a 160k -movflags +faststart /tmp/main.mp4
+          test -s /tmp/main.mp4
+
+      - name: Build outro
+        shell: bash
+        run: |
+          ffmpeg -hide_banner -loglevel error -y \
             -loop 1 -i branding/khalf-alraqam-logo.jpg \
-            -filter_complex "\
-              [1:v]scale=150:-1,format=rgba,colorchannelmixer=aa=0.72[wm];\
-              [0:v][wm]overlay=W-w-36:36[main];\
-              color=c=black:s=1080x1920:d=2[outbg];\
-              [1:v]scale=700:-1[outlogo];\
-              [outbg][outlogo]overlay=(W-w)/2:(H-h)/2,fade=t=in:st=0:d=0.35,fade=t=out:st=1.55:d=0.45[outro];\
-              [main][outro]concat=n=2:v=1:a=0[v];\
-              [0:a]aresample=48000[a0];\
-              aevalsrc=0:d=2:s=48000:c=stereo[asilence];\
-              [a0][asilence]concat=n=2:v=0:a=1[a]" \
-            -map "[v]" -map "[a]" \
-            -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p \
-            -c:a aac -b:a 192k -movflags +faststart \
-            /tmp/heygen-branded.mp4
+            -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
+            -t 2 \
+            -vf "scale=760:760:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,fade=t=in:st=0:d=0.3,fade=t=out:st=1.6:d=0.4,format=yuv420p" \
+            -c:v libx264 -preset veryfast -crf 20 -r 30 -c:a aac -b:a 160k -shortest /tmp/outro.mp4
+          test -s /tmp/outro.mp4
+
+      - name: Append cinematic outro
+        shell: bash
+        run: |
+          printf "file '/tmp/main.mp4'\nfile '/tmp/outro.mp4'\n" > /tmp/list.txt
+          ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i /tmp/list.txt \
+            -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 160k \
+            -movflags +faststart /tmp/heygen-branded.mp4
           test -s /tmp/heygen-branded.mp4
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/heygen-branded.mp4
 
@@ -67,11 +74,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         shell: bash
         run: |
-          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets unavailable'; exit 1; }
-          RESPONSE="$(curl --fail --silent --show-error \
-            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "video=@/tmp/heygen-branded.mp4" \
-            -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ Watermark + branded cinematic outro\n\nهذه نسخة المراجعة الجديدة بالشعار المعتمد.")"
+          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || exit 1
+          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@/tmp/heygen-branded.mp4" -F "supports_streaming=true" \
+            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ النسخة الجديدة بالشعار المعتمد")"
           echo "$RESPONSE" | python -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
