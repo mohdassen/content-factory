@@ -1,108 +1,87 @@
-name: Content Factory Batch 001
+name: Content Factory V3 Golden
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'content/**'
-      - 'assets/**'
-      - 'scripts/**'
-      - 'docs/ai-first-architecture.md'
-      - '.github/workflows/batch.yml'
+    inputs:
+      content_id:
+        description: 'Content ID to render (approved V3 masters required)'
+        required: true
+        default: '001'
 
 jobs:
-  validate:
+  render-v3:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install --upgrade pip pytest
-      - run: pytest -q
 
-  render-batch:
-    needs: validate
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 5
-      matrix:
-        item:
-          - { id: '001', slug: '001-netflix-blockbuster' }
-          - { id: '002', slug: '002-kodak-digital-camera' }
-          - { id: '003', slug: '003-costco-membership' }
-          - { id: '004', slug: '004-nvidia-cuda' }
-          - { id: '005', slug: '005-google-glass' }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install production dependencies
+      - name: Install V3 production dependencies
         run: |
           python -m pip install --upgrade pip edge-tts
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-core jq
-      - name: Generate Arabic narration and word timing
-        run: python scripts/generate_voice_item.py --id "${{ matrix.item.id }}"
-      - name: Prepare visual source
-        env:
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Resolve story
+        id: story
+        shell: bash
         run: |
-          if find "assets/stories/${{ matrix.item.slug }}/scenes" -maxdepth 1 -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) -print -quit 2>/dev/null | grep -q .; then
-            echo "Approved AI master scenes found; stock fetch skipped."
-          else
-            echo "No approved master scenes in repository; preparing fallback visuals for non-golden items."
-            python scripts/fetch_visuals.py --id "${{ matrix.item.id }}"
-          fi
-      - name: Render V3 golden vertical MP4
-        run: python scripts/render_item.py --id "${{ matrix.item.id }}"
+          ID='${{ inputs.content_id }}'
+          STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"
+          test -n "$STORY_DIR" || { echo "Unknown content id: $ID"; exit 1; }
+          SLUG="$(basename "$STORY_DIR")"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Strict V3 master preflight
+        shell: bash
+        run: |
+          DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
+          test -d "$DIR" || { echo "BLOCKED: approved V3 master directory is missing: $DIR"; exit 1; }
+          COUNT="$(find "$DIR" -maxdepth 1 -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | wc -l)"
+          test "$COUNT" -ge 6 || { echo "BLOCKED: only $COUNT approved masters found"; exit 1; }
+          echo "Strict V3 preflight passed with $COUNT independent masters."
+
+      - name: Generate Arabic narration and real timing
+        run: python scripts/generate_voice_item.py --id '${{ steps.story.outputs.id }}'
+
+      - name: Render strict V3 cinematic MP4
+        run: python scripts/render_item.py --id '${{ steps.story.outputs.id }}'
+
       - name: Run technical quality gate
-        run: python scripts/qc_video.py --id "${{ matrix.item.id }}" --min-duration 35 --max-duration 60
-      - name: Send QC-passed video to Telegram
+        run: python scripts/qc_video.py --id '${{ steps.story.outputs.id }}' --min-duration 35 --max-duration 60
+
+      - name: Verify V3 architecture before delivery
+        shell: bash
+        run: |
+          META="output/${{ steps.story.outputs.slug }}-render.json"
+          QC="output/${{ steps.story.outputs.id }}-qc.json"
+          test "$(jq -r '.architecture' "$META")" = 'V3_GOLDEN_STRICT' || { echo 'BLOCKED: renderer is not strict V3'; exit 1; }
+          test "$(jq -r '.all_visuals_are_approved_masters' "$META")" = 'true' || { echo 'BLOCKED: non-master visual detected'; exit 1; }
+          test "$(jq -r '.decision' "$QC")" = 'PASS' || { echo 'BLOCKED: QC did not pass'; exit 1; }
+
+      - name: Send strict V3 video to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        shell: bash
         run: |
-          DECISION="$(jq -r '.decision' output/${{ matrix.item.id }}-qc.json)"
-          DURATION="$(jq -r '.duration_seconds' output/${{ matrix.item.id }}-qc.json)"
-          if [ "$DECISION" != "PASS" ]; then
-            echo "Telegram skipped: QC decision=$DECISION"
-            exit 0
-          fi
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram skipped: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are not available in this repository."
-            exit 0
-          fi
+          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets unavailable'; exit 1; }
+          VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
+          DURATION="$(jq -r '.duration_seconds' output/${{ steps.story.outputs.id }}-qc.json)"
           curl --fail --silent --show-error \
             -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "video=@output/${{ matrix.item.slug }}-preview.mp4" \
+            -F "video=@${VIDEO}" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 Content Factory | ${{ matrix.item.id }}\n✅ QC: PASS\n⏱ ${DURATION}s\n${{ matrix.item.slug }}" >/dev/null
-          echo "Telegram delivery successful for ${{ matrix.item.slug }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.item.slug }}-preview
-          path: output/${{ matrix.item.slug }}-preview.mp4
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.item.slug }}-render-metadata
-          path: output/${{ matrix.item.slug }}-render.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.item.slug }}-qc
-          path: output/${{ matrix.item.id }}-qc.json
+            -F "caption=🎬 Content Factory | STRICT V3 GOLDEN\n✅ QC: PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
+          echo 'Strict V3 Telegram delivery successful.'
 
-  batch-complete:
-    if: ${{ always() }}
-    needs: [validate, render-batch]
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "validate=${{ needs.validate.result }}"
-          echo "render-batch=${{ needs.render-batch.result }}"
-          test "${{ needs.validate.result }}" = "success"
-          test "${{ needs.render-batch.result }}" = "success"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.story.outputs.slug }}-v3-golden
+          path: |
+            output/${{ steps.story.outputs.slug }}-preview.mp4
+            output/${{ steps.story.outputs.slug }}-render.json
+            output/${{ steps.story.outputs.id }}-qc.json
