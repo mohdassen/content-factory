@@ -16,7 +16,7 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip edge-tts pillow huggingface_hub
+          python -m pip install --upgrade pip edge-tts pillow
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core jq
       - name: Build stable PNG brand logo
         run: |
@@ -42,11 +42,10 @@ jobs:
           test -n "$STORY_DIR"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
           echo "slug=$(basename "$STORY_DIR")" >> "$GITHUB_OUTPUT"
-      - name: Generate FLUX masters
-        env:
-          HF_TOKEN: ${{ secrets.HF_Token }}
-          IMAGE_MODEL: black-forest-labs/FLUX.1-schnell
-        run: python scripts/generate_flux_masters.py --id '007'
+      - name: Stage masters from permanent GitHub asset library
+        run: |
+          python scripts/stage_library_assets.py --id '007'
+          test "$(find assets/stories/${{ steps.story.outputs.slug }}/scenes -maxdepth 1 -type f -name '*.webp' | wc -l)" -eq 8
       - name: Generate narration
         run: python scripts/generate_voice_item.py --id '007'
       - name: Render V3.2 visible cinematic motion
@@ -64,15 +63,17 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
-          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 خلف الشاشة | 007 | V3.2 cinematic motion test")"
+          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 خلف الشاشة | 007 | V3.2 permanent-library test")"
           echo "$RESPONSE" | jq -e '.ok == true' >/dev/null
           echo "Telegram V3.2 delivery successful. message_id=$(echo "$RESPONSE" | jq -r '.result.message_id')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: 007-v32-cinematic-${{ github.run_number }}
+          name: 007-v32-library-${{ github.run_number }}
           retention-days: 30
           path: |
             output/
             assets/stories/${{ steps.story.outputs.slug }}/scenes/
+            assets/stories/${{ steps.story.outputs.slug }}/library-selection.json
+            assets/library/manifest.json
             assets/brand/logo.png
