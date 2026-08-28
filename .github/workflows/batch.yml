@@ -48,9 +48,8 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             ID='${{ inputs.content_id }}'
           else
-            TRIGGER="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep '^.factory-trigger/' | head -n1)"
-            test -n "$TRIGGER" || { echo 'No factory trigger file found in push'; exit 1; }
-            ID="$(basename "$TRIGGER" | cut -d. -f1)"
+            ID="$(printf '%s' '${{ github.event.head_commit.message }}' | grep -oE '[0-9]{3}' | head -n1)"
+            test -n "$ID" || { echo 'No 3-digit content id found in trigger commit message'; exit 1; }
           fi
           STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"
           test -n "$STORY_DIR" || { echo "Unknown content id: $ID"; exit 1; }
