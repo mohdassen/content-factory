@@ -1,0 +1,1 @@
+Trigger content 005 after lightweight final-compose fix. Commit 1c619be31d417716ff63d58555eef8129d1434d3
