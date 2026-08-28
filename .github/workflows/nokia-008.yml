@@ -1,0 +1,105 @@
+name: Content Factory 008 Nokia Library Proof
+
+on:
+  push:
+    paths:
+      - '.nokia-trigger/**'
+
+jobs:
+  render-008:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip edge-tts pillow
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core jq unzip
+
+      - name: Build stable PNG brand logo
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw,ImageFont
+          dst=Path('assets/brand/logo.png'); dst.parent.mkdir(parents=True,exist_ok=True)
+          W,H=900,300; im=Image.new('RGBA',(W,H),(0,0,0,0)); d=ImageDraw.Draw(im)
+          fp='/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf'
+          if not Path(fp).exists(): fp='/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf'
+          font=ImageFont.truetype(fp,92); small=ImageFont.truetype(fp,34)
+          d.rounded_rectangle((18,18,882,282),radius=64,fill=(8,12,18,224),outline=(255,255,255,48),width=3)
+          d.ellipse((62,67,230,235),outline=(255,255,255,230),width=12); d.polygon([(132,112),(132,190),(190,151)],fill=(255,255,255,235))
+          d.text((830,72),'خلف الشاشة',font=font,fill=(255,255,255,255),anchor='ra',direction='rtl')
+          d.text((825,190),'قصص ما وراء التقنية',font=small,fill=(220,225,232,220),anchor='ra',direction='rtl')
+          im.save(dst,'PNG',optimize=True)
+          PY
+
+      - name: Stage Nokia images from permanent GitHub library
+        run: |
+          rm -rf assets/stories/008-nokia/scenes assets/stories/008-nokia/raw
+          mkdir -p assets/stories/008-nokia/raw assets/stories/008-nokia/scenes
+          unzip -q assets/library/packs/nokia-008.zip -d assets/stories/008-nokia/raw
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json, hashlib
+          raw=Path('assets/stories/008-nokia/raw')
+          dst=Path('assets/stories/008-nokia/scenes')
+          rows=[]
+          for i,p in enumerate(sorted(raw.glob('*.webp')),1):
+              im=Image.open(p).convert('RGB')
+              if im.height <= im.width:
+                  raise SystemExit(f'non portrait image: {p}')
+              scale=max(900/im.width,1600/im.height)
+              size=(round(im.width*scale),round(im.height*scale))
+              im=im.resize(size,Image.Resampling.LANCZOS)
+              left=max(0,(im.width-900)//2); top=max(0,(im.height-1600)//2)
+              im=im.crop((left,top,left+900,top+1600))
+              out=dst/f'{i:02d}.webp'
+              im.save(out,'WEBP',quality=92,method=6)
+              rows.append({'scene':i,'source':p.name,'path':out.as_posix(),'sha256':hashlib.sha256(out.read_bytes()).hexdigest()})
+          if len(rows) != 8:
+              raise SystemExit(f'expected 8 Nokia library images, found {len(rows)}')
+          sel={'source':'CHATGPT_PERMANENT_GITHUB_LIBRARY','story':'008-nokia','topic':'nokia-rise-and-fall','scene_count':8,'assets':rows}
+          Path('assets/stories/008-nokia/library-selection.json').write_text(json.dumps(sel,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(sel,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Generate narration
+        run: python scripts/generate_voice_item.py --id '008'
+
+      - name: Render cinematic Video 008
+        run: python scripts/render_item_v32.py --id '008'
+
+      - name: Verify cinematic outro
+        run: |
+          META="output/008-nokia-render.json"
+          test "$(jq -r '.cinematic_outro' "$META")" = 'true'
+          test -s output/008-nokia-outro.mp4
+
+      - name: Run QC
+        run: python scripts/qc_video.py --id '008' --min-duration 35 --max-duration 80
+
+      - name: Send Nokia proof video to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          VIDEO="output/008-nokia-preview.mp4"
+          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 خلف الشاشة | 008 Nokia | ChatGPT image-library proof")"
+          echo "$RESPONSE" | jq -e '.ok == true' >/dev/null
+          echo "Telegram delivery successful. message_id=$(echo "$RESPONSE" | jq -r '.result.message_id')"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 008-nokia-library-proof-${{ github.run_number }}
+          retention-days: 30
+          path: |
+            output/
+            assets/stories/008-nokia/scenes/
+            assets/stories/008-nokia/library-selection.json
+            assets/library/packs/nokia-008.zip
