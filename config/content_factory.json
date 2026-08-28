@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "language": "ar",
   "primary_platform": "youtube_shorts",
   "distribution": ["youtube_shorts", "tiktok", "instagram_reels", "facebook_reels"],
@@ -12,6 +12,14 @@
     "saudi_gulf_opportunity"
   ],
   "approval_threshold": 70,
+  "brand": {
+    "name_ar": "خلف الشاشة",
+    "logo_path": "assets/brand/logo.webp",
+    "logo_status": "APPROVED",
+    "placement": "top_right",
+    "watermark_opacity": 0.82,
+    "max_width_px": 150
+  },
   "video": {
     "width": 1080,
     "height": 1920,
