@@ -22,14 +22,13 @@ jobs:
         run: |
           LOCK='config/production_mode.json'
           test -f "$LOCK" || { echo 'BLOCKED: production lock file missing'; exit 1; }
-          test "$(jq -r '.architecture' "$LOCK")" = 'V3_GOLDEN_STRICT' || { echo 'BLOCKED: architecture is not strict V3'; exit 1; }
-          test "$(jq -r '.production_locked' "$LOCK")" = 'true' || { echo 'BLOCKED: production lock disabled'; exit 1; }
-          test "$(jq -r '.approved_master_only' "$LOCK")" = 'true' || { echo 'BLOCKED: approved-master-only is disabled'; exit 1; }
-          test "$(jq -r '.allow_stock_fallback' "$LOCK")" = 'false' || { echo 'BLOCKED: stock fallback is forbidden'; exit 1; }
-          test "$(jq -r '.allow_storyboard_as_source' "$LOCK")" = 'false' || { echo 'BLOCKED: storyboard source is forbidden'; exit 1; }
-          test "$(jq -r '.allow_motion_graphics_fallback' "$LOCK")" = 'false' || { echo 'BLOCKED: motion fallback is forbidden'; exit 1; }
-          test "$(jq -r '.telegram_delivery_requires_strict_v3' "$LOCK")" = 'true' || { echo 'BLOCKED: Telegram V3 gate disabled'; exit 1; }
-          echo 'Production architecture locked to V3_GOLDEN_STRICT.'
+          test "$(jq -r '.architecture' "$LOCK")" = 'V3_GOLDEN_STRICT' || exit 1
+          test "$(jq -r '.production_locked' "$LOCK")" = 'true' || exit 1
+          test "$(jq -r '.approved_master_only' "$LOCK")" = 'true' || exit 1
+          test "$(jq -r '.allow_stock_fallback' "$LOCK")" = 'false' || exit 1
+          test "$(jq -r '.allow_storyboard_as_source' "$LOCK")" = 'false' || exit 1
+          test "$(jq -r '.allow_motion_graphics_fallback' "$LOCK")" = 'false' || exit 1
+          test "$(jq -r '.telegram_delivery_requires_strict_v3' "$LOCK")" = 'true' || exit 1
 
       - uses: actions/setup-python@v5
         with:
@@ -56,7 +55,6 @@ jobs:
           SLUG="$(basename "$STORY_DIR")"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
-          echo "Resolved $ID -> $SLUG"
 
       - name: Generate independent AI masters when missing
         env:
@@ -79,12 +77,12 @@ jobs:
         shell: bash
         run: |
           DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
-          test -d "$DIR" || { echo "BLOCKED: approved V3 master directory is missing: $DIR"; exit 1; }
+          test -d "$DIR" || exit 1
           COUNT="$(find "$DIR" -maxdepth 1 -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | wc -l)"
-          test "$COUNT" -ge 6 || { echo "BLOCKED: only $COUNT approved masters found"; exit 1; }
+          test "$COUNT" -ge 6 || exit 1
           echo "Strict V3 preflight passed with $COUNT independent masters."
 
-      - name: Generate Arabic narration and real timing
+      - name: Generate Arabic narration and timing
         run: python scripts/generate_voice_item.py --id '${{ steps.story.outputs.id }}'
 
       - name: Render strict V3 cinematic MP4
@@ -98,11 +96,16 @@ jobs:
         run: |
           META="output/${{ steps.story.outputs.slug }}-render.json"
           QC="output/${{ steps.story.outputs.id }}-qc.json"
-          test "$(jq -r '.architecture' "$META")" = 'V3_GOLDEN_STRICT' || { echo 'BLOCKED: renderer is not strict V3'; exit 1; }
-          test "$(jq -r '.all_visuals_are_approved_masters' "$META")" = 'true' || { echo 'BLOCKED: non-master visual detected'; exit 1; }
-          test "$(jq -r '.forbidden_fallbacks_enabled' "$META")" = 'false' || { echo 'BLOCKED: forbidden fallback detected'; exit 1; }
-          test "$(jq -r '.narration_timing' "$META")" = 'REAL_WORD_BOUNDARIES' || { echo 'BLOCKED: real narration timing missing'; exit 1; }
-          test "$(jq -r '.decision' "$QC")" = 'PASS' || { echo 'BLOCKED: QC did not pass'; exit 1; }
+          test "$(jq -r '.architecture' "$META")" = 'V3_GOLDEN_STRICT' || exit 1
+          test "$(jq -r '.all_visuals_are_approved_masters' "$META")" = 'true' || exit 1
+          test "$(jq -r '.forbidden_fallbacks_enabled' "$META")" = 'false' || exit 1
+          TIMING="$(jq -r '.narration_timing' "$META")"
+          case "$TIMING" in
+            REAL_WORD_BOUNDARIES|AUDIO_ALIGNED_WORD_TIMING) ;;
+            *) echo "BLOCKED: invalid narration timing source: $TIMING"; exit 1 ;;
+          esac
+          test "$(jq -r '.scene_timing' "$META")" = 'NARRATION_PARAGRAPH_ALIGNED' || exit 1
+          test "$(jq -r '.decision' "$QC")" = 'PASS' || exit 1
 
       - name: Create immutable versioned archive
         id: archive
@@ -117,12 +120,12 @@ jobs:
           cp "output/${SLUG}-preview.mp4" "$ARCHIVE/${SLUG}-${VERSION}.mp4"
           cp "output/${SLUG}-render.json" "$ARCHIVE/render.json"
           cp "output/${ID}-qc.json" "$ARCHIVE/qc.json"
+          cp "output/${SLUG}-voice.mp3" "$ARCHIVE/voice.mp3"
+          cp "output/${SLUG}-word-boundaries.json" "$ARCHIVE/timing.json"
           cp -a "assets/stories/${SLUG}/scenes/." "$ARCHIVE/scenes/"
-          find assets/stories/${SLUG} -maxdepth 1 -type f \( -name '*.mp3' -o -name '*.wav' -o -name '*.json' -o -name '*.srt' -o -name '*.vtt' \) -exec cp {} "$ARCHIVE/" \; || true
           printf '{"story":"%s","version":"%s","created_utc":"%s","run_id":"%s","commit":"%s","architecture":"V3_GOLDEN_STRICT"}\n' "$SLUG" "$VERSION" "$STAMP" '${{ github.run_id }}' '${{ github.sha }}' > "$ARCHIVE/archive-manifest.json"
           echo "dir=$ARCHIVE" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Archived immutable render at $ARCHIVE"
 
       - name: Send review images and strict V3 video to Telegram
         env:
@@ -130,24 +133,19 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         shell: bash
         run: |
-          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets unavailable'; exit 1; }
+          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || exit 1
           SCENE_DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
           for IMG in "$SCENE_DIR"/*; do
             [ -f "$IMG" ] || continue
-            curl --fail --silent --show-error \
-              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
-              -F "chat_id=${TELEGRAM_CHAT_ID}" \
-              -F "photo=@${IMG}" \
+            curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" -F "photo=@${IMG}" \
               -F "caption=🖼️ مراجعة المشهد | ${{ steps.story.outputs.slug }} | $(basename "$IMG")" >/dev/null
           done
           VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
           DURATION="$(jq -r '.duration_seconds' output/${{ steps.story.outputs.id }}-qc.json)"
-          curl --fail --silent --show-error \
-            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "video=@${VIDEO}" \
-            -F "supports_streaming=true" \
-            -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN | ${{ steps.archive.outputs.version }}\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}\n\nرد بالموافقة أو الملاحظات قبل النشر." >/dev/null
+          curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" \
+            -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN | ${{ steps.archive.outputs.version }}\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
           echo 'Telegram review delivery successful.'
 
       - uses: actions/upload-artifact@v4
