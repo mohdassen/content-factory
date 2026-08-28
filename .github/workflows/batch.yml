@@ -40,6 +40,8 @@ jobs:
           python -m pip install --upgrade pip edge-tts
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-core jq
+          ffmpeg -version | head -n 3
+          ffmpeg -hide_banner -filters | grep -E ' subtitles | overlay | scale | crop ' || true
 
       - name: Resolve story
         id: story
@@ -89,6 +91,19 @@ jobs:
       - name: Render strict V3 cinematic MP4
         run: python scripts/render_item.py --id '${{ steps.story.outputs.id }}'
 
+      - name: Publish renderer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-diagnostics-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            output/diagnostics/
+            output/*-background.mp4
+            output/*-segments/
+            output/*.ass
+
       - name: Run technical quality gate
         run: python scripts/qc_video.py --id '${{ steps.story.outputs.id }}' --min-duration 35 --max-duration 70
 
@@ -98,6 +113,7 @@ jobs:
           META="output/${{ steps.story.outputs.slug }}-render.json"
           QC="output/${{ steps.story.outputs.id }}-qc.json"
           test "$(jq -r '.architecture' "$META")" = 'V3_GOLDEN_STRICT' || exit 1
+          test "$(jq -r '.renderer_mode' "$META")" = 'ROBUST_STAGED_V1' || exit 1
           test "$(jq -r '.all_visuals_are_approved_masters' "$META")" = 'true' || exit 1
           test "$(jq -r '.forbidden_fallbacks_enabled' "$META")" = 'false' || exit 1
           TIMING="$(jq -r '.narration_timing' "$META")"
