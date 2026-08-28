@@ -1,0 +1,1 @@
+Trigger 005 after permanent PNG logo renderer fix. No OpenAI image generation should occur; recover cached masters only.
