@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip edge-tts pillow
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-core jq
+          sudo apt-get install -y ffmpeg fonts-noto-core jq unzip
           ffmpeg -version | head -n 3
 
       - name: Build stable PNG brand logo
@@ -48,33 +48,18 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from PIL import Image, ImageDraw, ImageFont
-
-          dst = Path('assets/brand/logo.png')
-          dst.parent.mkdir(parents=True, exist_ok=True)
-          W, H = 900, 300
-          im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-          d = ImageDraw.Draw(im)
-          font_path = '/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf'
-          if not Path(font_path).exists():
-              font_path = '/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf'
-          font = ImageFont.truetype(font_path, 92)
-          small = ImageFont.truetype(font_path, 34)
-
-          # Dark rounded badge + lens/play mark. Transparent outside.
-          d.rounded_rectangle((18, 18, 882, 282), radius=64, fill=(8, 12, 18, 224), outline=(255,255,255,48), width=3)
-          d.ellipse((62, 67, 230, 235), outline=(255,255,255,230), width=12)
-          d.polygon([(132, 112), (132, 190), (190, 151)], fill=(255,255,255,235))
-
-          title = 'خلف الشاشة'
-          bbox = d.textbbox((0,0), title, font=font, direction='rtl')
-          tw = bbox[2]-bbox[0]
-          d.text((830, 72), title, font=font, fill=(255,255,255,255), anchor='ra', direction='rtl')
-          d.text((825, 190), 'قصص ما وراء التقنية', font=small, fill=(220,225,232,220), anchor='ra', direction='rtl')
-
-          im.save(dst, 'PNG', optimize=True)
-          with Image.open(dst) as check:
-              check.verify()
-          print(f'Generated stable brand logo: {dst}')
+          dst = Path('assets/brand/logo.png'); dst.parent.mkdir(parents=True, exist_ok=True)
+          W,H=900,300; im=Image.new('RGBA',(W,H),(0,0,0,0)); d=ImageDraw.Draw(im)
+          fp='/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf'
+          if not Path(fp).exists(): fp='/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf'
+          font=ImageFont.truetype(fp,92); small=ImageFont.truetype(fp,34)
+          d.rounded_rectangle((18,18,882,282),radius=64,fill=(8,12,18,224),outline=(255,255,255,48),width=3)
+          d.ellipse((62,67,230,235),outline=(255,255,255,230),width=12)
+          d.polygon([(132,112),(132,190),(190,151)],fill=(255,255,255,235))
+          d.text((830,72),'خلف الشاشة',font=font,fill=(255,255,255,255),anchor='ra',direction='rtl')
+          d.text((825,190),'قصص ما وراء التقنية',font=small,fill=(220,225,232,220),anchor='ra',direction='rtl')
+          im.save(dst,'PNG',optimize=True)
+          with Image.open(dst) as check: check.verify()
           PY
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 assets/brand/logo.png
 
@@ -82,17 +67,32 @@ jobs:
         id: story
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ID='${{ inputs.content_id }}'
-          else
-            ID="$(printf '%s' '${{ github.event.head_commit.message }}' | grep -oE '[0-9]{3}' | head -n1)"
-            test -n "$ID" || { echo 'No 3-digit content id found in trigger commit message'; exit 1; }
-          fi
-          STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"
-          test -n "$STORY_DIR" || { echo "Unknown content id: $ID"; exit 1; }
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then ID='${{ inputs.content_id }}'; else ID="$(printf '%s' '${{ github.event.head_commit.message }}' | grep -oE '[0-9]{3}' | head -n1)"; fi
+          test -n "$ID" || exit 1
+          STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"; test -n "$STORY_DIR" || exit 1
           SLUG="$(basename "$STORY_DIR")"
-          echo "id=$ID" >> "$GITHUB_OUTPUT"
-          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"; echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Recover previously generated 005 masters from successful scene render cache
+        if: steps.story.outputs.id == '005'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"; mkdir -p "$DIR"
+          COUNT="$(find "$DIR" -maxdepth 1 -type f -name '*.png' | wc -l)"
+          if [ "$COUNT" -lt 7 ]; then
+            echo 'Recovering the seven already-generated visuals from Run 28 diagnostics; no OpenAI image call.'
+            curl -L --fail --silent --show-error -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' \
+              'https://api.github.com/repos/mohdassen/content-factory/actions/artifacts/9685349454/zip' -o /tmp/r28.zip
+            rm -rf /tmp/r28; mkdir -p /tmp/r28; unzip -q /tmp/r28.zip -d /tmp/r28
+            for N in 01 02 03 04 05 06 07; do
+              SRC="/tmp/r28/005-google-glass-segments/${N}.mp4"; test -s "$SRC" || { echo "Missing cached segment $N"; exit 1; }
+              ffmpeg -hide_banner -loglevel error -y -ss 0.10 -i "$SRC" -frames:v 1 "$DIR/${N}.png"
+            done
+          fi
+          test "$(find "$DIR" -maxdepth 1 -type f -name '*.png' | wc -l)" -ge 7
+          echo 'Recovered cached masters ready.'
 
       - name: Generate independent AI masters when missing
         env:
@@ -103,22 +103,15 @@ jobs:
         shell: bash
         run: |
           DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
-          COUNT=0
-          if [ -d "$DIR" ]; then COUNT="$(find "$DIR" -maxdepth 1 -type f -name '*.png' | wc -l)"; fi
-          if [ "$COUNT" -lt 6 ]; then
-            python scripts/generate_ai_masters.py --id '${{ steps.story.outputs.id }}'
-          else
-            echo "Keeping $COUNT existing approved masters."
-          fi
+          COUNT=0; if [ -d "$DIR" ]; then COUNT="$(find "$DIR" -maxdepth 1 -type f -name '*.png' | wc -l)"; fi
+          if [ "$COUNT" -lt 6 ]; then python scripts/generate_ai_masters.py --id '${{ steps.story.outputs.id }}'; else echo "Keeping $COUNT existing/recovered approved masters; OpenAI generation skipped."; fi
 
       - name: Strict V3 master preflight
         shell: bash
         run: |
-          DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
-          test -d "$DIR" || exit 1
+          DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"; test -d "$DIR" || exit 1
           COUNT="$(find "$DIR" -maxdepth 1 -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | wc -l)"
-          test "$COUNT" -ge 6 || exit 1
-          echo "Strict V3 preflight passed with $COUNT independent masters."
+          test "$COUNT" -ge 6 || exit 1; echo "Strict V3 preflight passed with $COUNT independent masters."
 
       - name: Generate Arabic narration and timing
         run: python scripts/generate_voice_item.py --id '${{ steps.story.outputs.id }}'
@@ -139,6 +132,7 @@ jobs:
             output/*-segments/
             output/*.ass
             assets/brand/logo.png
+            assets/stories/${{ steps.story.outputs.slug }}/scenes/
 
       - name: Run technical quality gate
         run: python scripts/qc_video.py --id '${{ steps.story.outputs.id }}' --min-duration 35 --max-duration 70
@@ -146,17 +140,12 @@ jobs:
       - name: Verify V3 architecture before delivery
         shell: bash
         run: |
-          META="output/${{ steps.story.outputs.slug }}-render.json"
-          QC="output/${{ steps.story.outputs.id }}-qc.json"
+          META="output/${{ steps.story.outputs.slug }}-render.json"; QC="output/${{ steps.story.outputs.id }}-qc.json"
           test "$(jq -r '.architecture' "$META")" = 'V3_GOLDEN_STRICT' || exit 1
           test "$(jq -r '.renderer_mode' "$META")" = 'ROBUST_STAGED_V1' || exit 1
           test "$(jq -r '.all_visuals_are_approved_masters' "$META")" = 'true' || exit 1
           test "$(jq -r '.forbidden_fallbacks_enabled' "$META")" = 'false' || exit 1
-          TIMING="$(jq -r '.narration_timing' "$META")"
-          case "$TIMING" in
-            REAL_WORD_BOUNDARIES|AUDIO_ALIGNED_WORD_TIMING) ;;
-            *) echo "BLOCKED: invalid narration timing source: $TIMING"; exit 1 ;;
-          esac
+          TIMING="$(jq -r '.narration_timing' "$META")"; case "$TIMING" in REAL_WORD_BOUNDARIES|AUDIO_ALIGNED_WORD_TIMING) ;; *) exit 1 ;; esac
           test "$(jq -r '.scene_timing' "$META")" = 'NARRATION_PARAGRAPH_ALIGNED' || exit 1
           test "$(jq -r '.decision' "$QC")" = 'PASS' || exit 1
 
@@ -164,21 +153,10 @@ jobs:
         id: archive
         shell: bash
         run: |
-          SLUG='${{ steps.story.outputs.slug }}'
-          ID='${{ steps.story.outputs.id }}'
-          VERSION="v$(printf '%03d' '${{ github.run_number }}')"
-          STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-          ARCHIVE="archive/${SLUG}/${VERSION}-${STAMP}"
-          mkdir -p "$ARCHIVE/scenes"
-          cp "output/${SLUG}-preview.mp4" "$ARCHIVE/${SLUG}-${VERSION}.mp4"
-          cp "output/${SLUG}-render.json" "$ARCHIVE/render.json"
-          cp "output/${ID}-qc.json" "$ARCHIVE/qc.json"
-          cp "output/${SLUG}-voice.mp3" "$ARCHIVE/voice.mp3"
-          cp "output/${SLUG}-word-boundaries.json" "$ARCHIVE/timing.json"
-          cp -a "assets/stories/${SLUG}/scenes/." "$ARCHIVE/scenes/"
+          SLUG='${{ steps.story.outputs.slug }}'; ID='${{ steps.story.outputs.id }}'; VERSION="v$(printf '%03d' '${{ github.run_number }}')"; STAMP="$(date -u +%Y%m%dT%H%M%SZ)"; ARCHIVE="archive/${SLUG}/${VERSION}-${STAMP}"
+          mkdir -p "$ARCHIVE/scenes"; cp "output/${SLUG}-preview.mp4" "$ARCHIVE/${SLUG}-${VERSION}.mp4"; cp "output/${SLUG}-render.json" "$ARCHIVE/render.json"; cp "output/${ID}-qc.json" "$ARCHIVE/qc.json"; cp "output/${SLUG}-voice.mp3" "$ARCHIVE/voice.mp3"; cp "output/${SLUG}-word-boundaries.json" "$ARCHIVE/timing.json"; cp -a "assets/stories/${SLUG}/scenes/." "$ARCHIVE/scenes/"
           printf '{"story":"%s","version":"%s","created_utc":"%s","run_id":"%s","commit":"%s","architecture":"V3_GOLDEN_STRICT"}\n' "$SLUG" "$VERSION" "$STAMP" '${{ github.run_id }}' '${{ github.sha }}' > "$ARCHIVE/archive-manifest.json"
-          echo "dir=$ARCHIVE" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dir=$ARCHIVE" >> "$GITHUB_OUTPUT"; echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Send review images and strict V3 video to Telegram
         env:
@@ -188,17 +166,9 @@ jobs:
         run: |
           test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || exit 1
           SCENE_DIR="assets/stories/${{ steps.story.outputs.slug }}/scenes"
-          for IMG in "$SCENE_DIR"/*; do
-            [ -f "$IMG" ] || continue
-            curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
-              -F "chat_id=${TELEGRAM_CHAT_ID}" -F "photo=@${IMG}" \
-              -F "caption=🖼️ مراجعة المشهد | ${{ steps.story.outputs.slug }} | $(basename "$IMG")" >/dev/null
-          done
-          VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
-          DURATION="$(jq -r '.duration_seconds' output/${{ steps.story.outputs.id }}-qc.json)"
-          curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TEGRAM_CHAT_ID:-$TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" \
-            -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN | ${{ steps.archive.outputs.version }}\n✅ AI masters مستقلة + توقيت السرد + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
+          for IMG in "$SCENE_DIR"/*; do [ -f "$IMG" ] || continue; curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "photo=@${IMG}" -F "caption=🖼️ مراجعة المشهد | ${{ steps.story.outputs.slug }} | $(basename "$IMG")" >/dev/null; done
+          VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"; DURATION="$(jq -r '.duration_seconds' output/${{ steps.story.outputs.id }}-qc.json)"
+          curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 للمراجعة والموافقة | STRICT V3 GOLDEN | ${{ steps.archive.outputs.version }}\n✅ Cached masters + narration timing + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
           echo 'Telegram review delivery successful.'
 
       - uses: actions/upload-artifact@v4
