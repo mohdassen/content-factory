@@ -1,0 +1,47 @@
+name: HeyGen Telegram Delivery
+
+on:
+  push:
+    paths:
+      - '.heygen-delivery/**'
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read delivery request
+        id: request
+        shell: bash
+        run: |
+          REQUEST='.heygen-delivery/current.txt'
+          test -f "$REQUEST" || { echo 'Missing HeyGen delivery request'; exit 1; }
+          URL="$(sed -n '1p' "$REQUEST")"
+          TITLE="$(sed -n '2p' "$REQUEST")"
+          test -n "$URL" || { echo 'Missing HeyGen video URL'; exit 1; }
+          echo "title=${TITLE:-HeyGen review}" >> "$GITHUB_OUTPUT"
+          printf '%s' "$URL" > /tmp/video_url
+
+      - name: Download HeyGen video
+        shell: bash
+        run: |
+          URL="$(cat /tmp/video_url)"
+          curl --fail --location --retry 3 --retry-delay 2 "$URL" -o /tmp/heygen-review.mp4
+          test -s /tmp/heygen-review.mp4
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /tmp/heygen-review.mp4
+
+      - name: Send HeyGen review to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        shell: bash
+        run: |
+          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets unavailable'; exit 1; }
+          curl --fail --silent --show-error \
+            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "video=@/tmp/heygen-review.mp4" \
+            -F "supports_streaming=true" \
+            -F "caption=🎬 HeyGen للمراجعة | ${{ steps.request.outputs.title }}\n✅ النسخة الأولى من Content Factory\n\nرد بالموافقة أو الملاحظات قبل النشر." >/dev/null
+          echo 'HeyGen video delivered to Telegram successfully.'
