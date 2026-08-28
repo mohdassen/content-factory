@@ -13,6 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Enforce production architecture lock
+        shell: bash
+        run: |
+          LOCK='config/production_mode.json'
+          test -f "$LOCK" || { echo 'BLOCKED: production lock file missing'; exit 1; }
+          test "$(jq -r '.architecture' "$LOCK")" = 'V3_GOLDEN_STRICT' || { echo 'BLOCKED: architecture is not strict V3'; exit 1; }
+          test "$(jq -r '.production_locked' "$LOCK")" = 'true' || { echo 'BLOCKED: production lock disabled'; exit 1; }
+          test "$(jq -r '.approved_master_only' "$LOCK")" = 'true' || { echo 'BLOCKED: approved-master-only is disabled'; exit 1; }
+          test "$(jq -r '.allow_stock_fallback' "$LOCK")" = 'false' || { echo 'BLOCKED: stock fallback is forbidden'; exit 1; }
+          test "$(jq -r '.allow_storyboard_as_source' "$LOCK")" = 'false' || { echo 'BLOCKED: storyboard source is forbidden'; exit 1; }
+          test "$(jq -r '.allow_motion_graphics_fallback' "$LOCK")" = 'false' || { echo 'BLOCKED: motion fallback is forbidden'; exit 1; }
+          test "$(jq -r '.telegram_delivery_requires_strict_v3' "$LOCK")" = 'true' || { echo 'BLOCKED: Telegram V3 gate disabled'; exit 1; }
+          echo 'Production architecture locked to V3_GOLDEN_STRICT.'
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -59,6 +74,8 @@ jobs:
           QC="output/${{ steps.story.outputs.id }}-qc.json"
           test "$(jq -r '.architecture' "$META")" = 'V3_GOLDEN_STRICT' || { echo 'BLOCKED: renderer is not strict V3'; exit 1; }
           test "$(jq -r '.all_visuals_are_approved_masters' "$META")" = 'true' || { echo 'BLOCKED: non-master visual detected'; exit 1; }
+          test "$(jq -r '.forbidden_fallbacks_enabled' "$META")" = 'false' || { echo 'BLOCKED: forbidden fallback detected'; exit 1; }
+          test "$(jq -r '.narration_timing' "$META")" = 'REAL_WORD_BOUNDARIES' || { echo 'BLOCKED: real narration timing missing'; exit 1; }
           test "$(jq -r '.decision' "$QC")" = 'PASS' || { echo 'BLOCKED: QC did not pass'; exit 1; }
 
       - name: Send strict V3 video to Telegram
@@ -75,7 +92,7 @@ jobs:
             -F "chat_id=${TELEGRAM_CHAT_ID}" \
             -F "video=@${VIDEO}" \
             -F "supports_streaming=true" \
-            -F "caption=🎬 Content Factory | STRICT V3 GOLDEN\n✅ QC: PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
+            -F "caption=🎬 Content Factory | STRICT V3 GOLDEN ONLY\n✅ Master-only + real timing + QC PASS\n⏱ ${DURATION}s\n${{ steps.story.outputs.slug }}" >/dev/null
           echo 'Strict V3 Telegram delivery successful.'
 
       - uses: actions/upload-artifact@v4
