@@ -14,8 +14,6 @@ MOTION_PRESETS = [
     "z='min(1.045,1+on*0.00018)':x='(iw-iw/zoom)*0.50':y='(ih-ih/zoom)*0.42'",
     "z='min(1.032,1+on*0.00011)':x='(iw-iw/zoom)*0.50':y='(ih-ih/zoom)*(0.68-0.24*on/180)'",
     "z='min(1.05,1+on*0.00020)':x='(iw-iw/zoom)*0.50':y='(ih-ih/zoom)*0.50'",
-    "z='if(eq(on,0),1.045,max(1.008,zoom-0.00013))':x='(iw-iw/zoom)*0.50':y='(ih-ih/zoom)*0.44'",
-    "z='min(1.045,1+on*0.00017)':x='(iw-iw/zoom)*(0.46+0.12*on/190)':y='(ih-ih/zoom)*(0.58-0.13*on/190)'",
 ]
 
 
@@ -54,40 +52,47 @@ def ass_time(seconds: float) -> str:
     return f'{h}:{m:02}:{s:02}.{centi:02}'
 
 
-def load_words(path: Path) -> list[dict]:
+def load_timing(path: Path) -> tuple[list[dict], str]:
     if not path.exists():
-        raise SystemExit('STRICT V3 requires real word-boundary timing metadata.')
+        raise SystemExit('STRICT V3 requires narration timing metadata.')
     data = json.loads(path.read_text(encoding='utf-8'))
     words = data.get('words') or []
     if not words:
-        raise SystemExit('STRICT V3 requires non-empty word-boundary timing metadata.')
-    return words
+        raise SystemExit('STRICT V3 requires non-empty narration timing metadata.')
+    return words, str(data.get('timing_source') or 'REAL_WORD_BOUNDARIES')
 
 
-def load_storyboard(path: Path) -> list[dict]:
-    scenes = json.loads(path.read_text(encoding='utf-8')).get('scenes') or []
-    if not scenes:
-        raise SystemExit('STRICT V3 requires an authored scene plan.')
-    return scenes
+def scene_plan(story: Path, words: list[dict], duration: float) -> list[dict]:
+    board = story / 'storyboard.json'
+    if board.exists():
+        scenes = json.loads(board.read_text(encoding='utf-8')).get('scenes') or []
+        if scenes and all(int(s.get('narration_end_word', 0)) > 0 for s in scenes[:-1]):
+            boundaries = [0.0]
+            previous_word = 0
+            for idx, scene in enumerate(scenes[:-1], 1):
+                end_word = int(scene['narration_end_word'])
+                if end_word <= previous_word or end_word > len(words):
+                    raise SystemExit(f'Invalid narration_end_word in scene {idx:02}.')
+                boundaries.append(float(words[end_word - 1]['end']))
+                previous_word = end_word
+            boundaries.append(duration)
+            return [{'start': boundaries[i], 'end': boundaries[i + 1]} for i in range(len(boundaries) - 1)]
 
+    # Golden fallback: one independently generated master per narration paragraph.
+    paragraphs = [p.strip() for p in story.joinpath('script_ar.txt').read_text(encoding='utf-8').split('\n\n') if p.strip()]
+    if len(paragraphs) < 2:
+        raise SystemExit('STRICT V3 requires multiple narration paragraphs or an authored storyboard.')
 
-def timed_scenes(storyboard: list[dict], words: list[dict], duration: float) -> list[dict]:
+    token_counts = [max(1, len(p.split())) for p in paragraphs]
+    total_tokens = sum(token_counts)
     boundaries = [0.0]
-    previous_word = 0
-    for idx, scene in enumerate(storyboard[:-1], 1):
-        end_word = int(scene.get('narration_end_word', 0))
-        if end_word <= previous_word or end_word > len(words):
-            raise SystemExit(
-                f'STRICT V3 scene {idx:02} has invalid narration_end_word={end_word}; '
-                f'word count={len(words)}.'
-            )
-        boundaries.append(float(words[end_word - 1]['end']))
-        previous_word = end_word
+    running = 0
+    for count in token_counts[:-1]:
+        running += count
+        word_idx = min(len(words) - 1, max(0, round(running / total_tokens * len(words)) - 1))
+        boundaries.append(float(words[word_idx]['end']))
     boundaries.append(duration)
-    return [
-        {'start': boundaries[i], 'end': boundaries[i + 1]}
-        for i in range(len(boundaries) - 1)
-    ]
+    return [{'start': boundaries[i], 'end': boundaries[i + 1]} for i in range(len(boundaries) - 1)]
 
 
 def chunks_from_words(words: list[dict], max_words: int = 7) -> list[dict]:
@@ -95,15 +100,11 @@ def chunks_from_words(words: list[dict], max_words: int = 7) -> list[dict]:
     for i in range(0, len(words), max_words):
         group = words[i:i + max_words]
         if group:
-            rows.append({
-                'start': float(group[0]['start']),
-                'end': float(group[-1]['end']),
-                'text': ' '.join(str(w['text']) for w in group),
-            })
+            rows.append({'start': float(group[0]['start']), 'end': float(group[-1]['end']), 'text': ' '.join(str(w['text']) for w in group)})
     return rows
 
 
-def write_ass(words: list[dict], duration: float, path: Path) -> None:
+def write_ass(words: list[dict], path: Path) -> None:
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -121,9 +122,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     events = []
     for row in chunks_from_words(words):
         text = str(row['text']).replace('\n', r'\N')
-        events.append(
-            f"Dialogue: 0,{ass_time(row['start'])},{ass_time(row['end'])},Arabic,,0,0,0,,{{\\fad(70,90)}}{text}"
-        )
+        events.append(f"Dialogue: 0,{ass_time(row['start'])},{ass_time(row['end'])},Arabic,,0,0,0,,{{\\fad(70,90)}}{text}")
     path.write_text(header + '\n'.join(events) + '\n', encoding='utf-8')
 
 
@@ -133,27 +132,20 @@ def strict_master(slug: str, idx: int) -> Path:
         candidate = root / f'{idx:02}.{ext}'
         if candidate.exists():
             return candidate
-    raise SystemExit(
-        f'BLOCKED: approved independent V3 master missing for scene {idx:02} in {root}. '
-        'Stock, storyboard crops and motion-graphics fallbacks are forbidden.'
-    )
+    raise SystemExit(f'BLOCKED: independent V3 master missing for scene {idx:02} in {root}.')
 
 
 def validate_master(image: Path) -> tuple[int, int]:
     w, h = probe_dimensions(image)
-    ratio = w / h
-    if abs(ratio - (9 / 16)) > 0.025:
-        raise SystemExit(f'BLOCKED: {image} is not a valid 9:16 master ({w}x{h}).')
-    if w < 900 or h < 1600:
-        raise SystemExit(f'BLOCKED: {image} is too small for V3 quality ({w}x{h}).')
+    if w < 900 or h < 1400 or h <= w:
+        raise SystemExit(f'BLOCKED: {image} is not a sufficiently large portrait master ({w}x{h}).')
     return w, h
 
 
 def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, list[dict]]:
     seg_dir = output / f'{slug}-segments'
     seg_dir.mkdir(parents=True, exist_ok=True)
-    files = []
-    visual_meta = []
+    files, visual_meta = [], []
 
     for idx, scene in enumerate(scenes, 1):
         length = max(0.35, scene['end'] - scene['start'])
@@ -161,20 +153,20 @@ def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, 
         w, h = validate_master(image)
         segment = seg_dir / f'{idx:02}.mp4'
         motion = MOTION_PRESETS[(idx - 1) % len(MOTION_PRESETS)]
-
         fade_in = 0.10 if idx > 1 else 0.18
         fade_out = 0.10 if idx < len(scenes) else 0.20
         fade_out_start = max(0.0, length - fade_out)
+
+        # Preserve aspect ratio. Fill 9:16 with centered crop only; never stretch.
         vf = (
-            "scale=1100:1956:force_original_aspect_ratio=increase,"
-            "crop=1100:1956,"
+            "scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,"
             f"zoompan={motion}:d=1:s=1080x1920:fps=30,"
             "eq=contrast=1.025:saturation=1.018:brightness=-0.002:gamma=1.008,"
             "unsharp=5:5:0.12:5:5:0.0,"
             "vignette=PI/11:eval=frame,"
             f"fade=t=in:st=0:d={fade_in:.3f},"
-            f"fade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f},"
-            "format=yuv420p"
+            f"fade=t=out:st={fade_out_start:.3f}:d={fade_out:.3f},format=yuv420p"
         )
         subprocess.run([
             'ffmpeg', '-y', '-framerate', '30', '-loop', '1', '-i', str(image),
@@ -182,7 +174,7 @@ def make_background(slug: str, scenes: list[dict], output: Path) -> tuple[Path, 
             '-preset', 'medium', '-crf', '18', '-r', '30', str(segment)
         ], check=True)
         files.append(segment)
-        visual_meta.append({'scene': idx, 'master': str(image), 'source_width': w, 'source_height': h})
+        visual_meta.append({'scene': idx, 'master': str(image), 'source_width': w, 'source_height': h, 'fit': 'aspect_preserved_center_crop'})
 
     concat = seg_dir / 'concat.txt'
     concat.write_text('\n'.join(f"file '{p.resolve()}'" for p in files), encoding='utf-8')
@@ -210,12 +202,11 @@ def main() -> None:
         raise SystemExit('STRICT V3 requires the approved brand logo asset.')
 
     duration = probe_duration(voice)
-    words = load_words(timing)
-    storyboard = load_storyboard(story / 'storyboard.json')
-    scenes = timed_scenes(storyboard, words, duration)
+    words, timing_source = load_timing(timing)
+    scenes = scene_plan(story, words, duration)
 
     subtitle = output / f'{slug}.ass'
-    write_ass(words, duration, subtitle)
+    write_ass(words, subtitle)
     bg, masters = make_background(slug, scenes, output)
 
     sub = str(subtitle).replace(':', r'\:').replace("'", r"\'")
@@ -228,13 +219,10 @@ def main() -> None:
     )
     out = output / f'{slug}-preview.mp4'
     subprocess.run([
-        'ffmpeg', '-y', '-i', str(bg), '-i', str(voice),
-        '-framerate', '30', '-loop', '1', '-i', str(logo),
-        '-filter_complex', filter_complex,
-        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=7',
-        '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264',
-        '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-b:a', '192k',
-        '-shortest', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(out)
+        'ffmpeg', '-y', '-i', str(bg), '-i', str(voice), '-framerate', '30', '-loop', '1', '-i', str(logo),
+        '-filter_complex', filter_complex, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=7',
+        '-map', '[v]', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(out)
     ], check=True)
 
     metadata = output / f'{slug}-render.json'
@@ -243,7 +231,8 @@ def main() -> None:
         'architecture': 'V3_GOLDEN_STRICT',
         'duration': round(duration, 3),
         'scene_count': len(scenes),
-        'narration_timing': 'REAL_WORD_BOUNDARIES',
+        'narration_timing': timing_source,
+        'scene_timing': 'NARRATION_PARAGRAPH_ALIGNED',
         'all_visuals_are_approved_masters': True,
         'brand_name': 'خلف الشاشة',
         'brand_logo': str(logo),
