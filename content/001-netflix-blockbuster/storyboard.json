@@ -5,16 +5,18 @@
   "aspect_ratio": "9:16",
   "resolution": "1080x1920",
   "target_duration_sec": 55,
+  "architecture": "V3_GOLDEN_STRICT",
   "hook": "في سنة 2000، شركة صغيرة طلبت 50 مليون دولار فقط… والعملاق الذي رفضها اختفى تقريبًا.",
   "scenes": [
-    {"start": 0, "end": 3, "caption": "50 مليون دولار فقط؟", "visual": "Dark cinematic opening, old DVD rental store, huge 50M number reveal"},
-    {"start": 3, "end": 10, "caption": "Netflix كانت تخسر المال", "visual": "Late-1990s startup office, mailed DVD envelopes, falling cash meter"},
-    {"start": 10, "end": 18, "caption": "Blockbuster كانت العملاق", "visual": "Large video-rental storefront, rows of VHS/DVD shelves, store-count map animation"},
-    {"start": 18, "end": 27, "caption": "صفقة بحوالي 50 مليون", "visual": "Boardroom reenactment, contract slides onto table, digital business icon appears"},
-    {"start": 27, "end": 31, "caption": "الجواب: لا", "visual": "Hard cut, contract stamped DECLINED, bass hit"},
-    {"start": 31, "end": 41, "caption": "القرار لم يكن غبيًا وقتها", "visual": "Dot-com crash headlines, red market chart, struggling startup imagery"},
-    {"start": 41, "end": 49, "caption": "لكن السوق تغيّر", "visual": "DVD morphs into streaming screen, global network lights up"},
-    {"start": 49, "end": 55, "caption": "لا تفترض أن الغد مثل اليوم", "visual": "Split screen: closed rental store vs streaming interface silhouette; final lesson text"}
+    {"scene": 1, "narration_end_word": 17, "visual": "Blockbuster at peak: rainy night storefront, cinematic, independent 9:16 master"},
+    {"scene": 2, "narration_end_word": 38, "visual": "Netflix founders pitching Blockbuster executives, tense boardroom, independent 9:16 master"},
+    {"scene": 3, "narration_end_word": 40, "visual": "Legacy rental model confidence: Blockbuster membership card and DVD close-up, independent 9:16 master"},
+    {"scene": 4, "narration_end_word": 60, "visual": "Netflix DVD-by-mail transition during uncertain dot-com era, independent 9:16 master"},
+    {"scene": 5, "narration_end_word": 77, "visual": "Streaming breakthrough in a premium home theater, independent 9:16 master"},
+    {"scene": 6, "narration_end_word": 82, "visual": "Blockbuster decline and abandoned store atmosphere, independent 9:16 master"},
+    {"scene": 7, "narration_end_word": 91, "visual": "Shattered Blockbuster membership card as collapse metaphor, independent 9:16 master"},
+    {"scene": 8, "narration_end_word": 97, "visual": "Netflix global streaming reach and media wall, independent 9:16 master"},
+    {"scene": 9, "narration_end_word": 101, "visual": "Netflix global rise versus rental-era ruins, final market-change metaphor, independent 9:16 master"}
   ],
   "fact_status": "VERIFIED_FOR_SCRIPTING",
   "source_pack": "research.md"
