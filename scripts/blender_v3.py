@@ -1,5 +1,6 @@
 import bpy
 import math
+import urllib.request
 from pathlib import Path
 from mathutils import Vector
 
@@ -12,6 +13,37 @@ CHAR_DIR = ASSET_ROOT / "characters"
 ANIM_DIR = ASSET_ROOT / "animations"
 ENV_DIR = ASSET_ROOT / "environment"
 PROP_DIR = ASSET_ROOT / "props"
+
+# CC0 Quaternius character derivatives distributed in a public GitHub repository.
+# Provenance is documented by the source repository's ATTRIBUTION.md.
+CHARACTER_ASSETS = {
+    "customer_a.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/220fa5da.glb",
+    "customer_b.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/3ac627e2.glb",
+    "customer_c.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/5ab8ebe2.glb",
+    "employee.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/tpose-hero.glb",
+}
+
+ANIMATION_ASSETS = {
+    "AnimationLibrary_Godot_Standard.gltf": "https://raw.githubusercontent.com/J-Ponzo/gltf-universal-animation-library/main/glTF/AnimationLibrary_Godot_Standard.gltf",
+    "AnimationLibrary_Godot_Standard.bin": "https://raw.githubusercontent.com/J-Ponzo/gltf-universal-animation-library/main/glTF/AnimationLibrary_Godot_Standard.bin",
+}
+
+
+def download_if_missing(folder: Path, filename: str, url: str):
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / filename
+    if target.exists() and target.stat().st_size > 1024:
+        return target
+    print(f"Downloading asset: {filename}")
+    urllib.request.urlretrieve(url, target)
+    return target
+
+
+def ensure_external_assets():
+    for name, url in CHARACTER_ASSETS.items():
+        download_if_missing(CHAR_DIR, name, url)
+    for name, url in ANIMATION_ASSETS.items():
+        download_if_missing(ANIM_DIR, name, url)
 
 
 def clear_scene():
@@ -74,6 +106,9 @@ def fallback_store():
     floor = make_material('Floor', (0.025, 0.03, 0.04), metallic=.15, roughness=.22)
     wall = make_material('Wall', (0.03, 0.05, 0.075), roughness=.55)
     shelf = make_material('Shelf', (0.025, 0.025, 0.03), metallic=.35, roughness=.32)
+    case_blue = make_material('CaseBlue', (.035, .12, .28), roughness=.32)
+    case_red = make_material('CaseRed', (.32, .035, .035), roughness=.32)
+    case_gold = make_material('CaseGold', (.38, .20, .035), roughness=.32)
     cyan = make_material('CyanPractical', (.02, .13, .16), roughness=.3, emission=(.02,.55,.7), strength=4)
     warm = make_material('WarmPractical', (.18, .07, .025), roughness=.3, emission=(1.0,.28,.06), strength=3)
 
@@ -82,11 +117,15 @@ def fallback_store():
     cube('LeftWall', (-5.1, 3.0, 2.0), (.08,7.0,2.0), wall)
     cube('RightWall', (5.1, 3.0, 2.0), (.08,7.0,2.0), wall)
 
-    for x in (-3.2, 0, 3.2):
-        for y in (1.6, 4.0, 6.4):
+    mats = [case_blue, case_red, case_gold]
+    for shelf_i, x in enumerate((-3.2, 0, 3.2)):
+        for y_i, y in enumerate((1.6, 4.0, 6.4)):
             cube(f'Shelf_{x}_{y}', (x,y,1.05), (1.05,.28,1.05), shelf)
-            for z in (.35,.75,1.15,1.55):
+            for z_i, z in enumerate((.35,.75,1.15,1.55)):
                 cube('ShelfBoard', (x,y,z), (1.05,.42,.025), shelf)
+                for k in range(9):
+                    px = x - .88 + k * .22
+                    cube(f'Case_{shelf_i}_{y_i}_{z_i}_{k}', (px,y-.32,z+.13), (.075,.055,.15), mats[(k+z_i+y_i)%3])
 
     cube('Counter', (2.9,8.1,.55), (1.6,.65,.55), shelf)
     cube('EntranceGlow', (0,-3.7,1.8), (2.15,.05,1.75), cyan)
@@ -101,6 +140,24 @@ def center_and_place(objects, location, scale=1.0, rotation_z=0.0):
         obj.scale *= scale
         obj.rotation_euler.z += rotation_z
         obj.location += Vector(location)
+    return roots
+
+
+def animate_character_roots(roots, idx):
+    if not roots:
+        return
+    # Natural ambient movement while the full mocap retarget stage is being integrated.
+    offsets = [Vector((0.0, .18, 0.0)), Vector((-.10, .08, 0.0)), Vector((.12, -.10, 0.0)), Vector((0.0, .04, 0.0))]
+    turns = [0.08, -0.10, 0.13, -0.05]
+    for root in roots:
+        start = root.location.copy()
+        start_rot = root.rotation_euler.z
+        root.keyframe_insert('location', frame=1)
+        root.keyframe_insert('rotation_euler', frame=1)
+        root.location = start + offsets[idx]
+        root.rotation_euler.z = start_rot + turns[idx]
+        root.keyframe_insert('location', frame=120)
+        root.keyframe_insert('rotation_euler', frame=120)
 
 
 def setup_camera():
@@ -170,6 +227,7 @@ def configure_render():
 
 
 def main():
+    ensure_external_assets()
     clear_scene()
     configure_render()
 
@@ -183,10 +241,11 @@ def main():
     char_assets = discover(CHAR_DIR)
     placements = [(-2.4,2.1,0), (1.0,3.4,0), (-.6,6.2,0), (2.9,7.4,0)]
     angles = [0.25,-0.5,0.9,math.pi]
-    scales = [1,1,1,1]
+    scales = [.95,.95,.95,.95]
     for idx, p in enumerate(char_assets[:4]):
         objs = import_asset(p)
-        center_and_place(objs, placements[idx], scales[idx], angles[idx])
+        roots = center_and_place(objs, placements[idx], scales[idx], angles[idx])
+        animate_character_roots(roots, idx)
 
     prop_assets = discover(PROP_DIR)
     for p in prop_assets[:10]:
