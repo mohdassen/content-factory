@@ -30,8 +30,8 @@ jobs:
       - name: Prepare assets and source
         shell: bash
         run: |
-          test -s assets/brand/logo.webp || exit 1
-          ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.webp -vf "scale=140:-2" -frames:v 1 /tmp/wm.png
+          test -s assets/brand/logo.png || exit 1
+          ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png -vf "scale=140:-2" -frames:v 1 /tmp/wm.png
           curl --fail --location --retry 3 --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
           test -s /tmp/source.mp4
 
@@ -72,7 +72,7 @@ jobs:
         shell: bash
         run: |
           ffmpeg -hide_banner -loglevel error -y \
-            -loop 1 -framerate 30 -i assets/brand/logo.webp \
+            -loop 1 -framerate 30 -i assets/brand/logo.png \
             -f lavfi -i color=c=0x05070b:s=1080x1920:r=30:d=2.6 \
             -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
             -filter_complex "[0:v]scale=760:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=.3:alpha=1,fade=t=out:st=2.2:d=.4:alpha=1[logo];[1:v][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
