@@ -16,7 +16,7 @@ jobs:
       - name: Install Blender and FFmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq blender ffmpeg
+          sudo apt-get install -y -qq blender ffmpeg libegl1 libgl1
           blender --version
       - name: Render six-second 3D sample
         run: |
