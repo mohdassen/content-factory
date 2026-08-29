@@ -1,0 +1,46 @@
+name: Blender 3D Sample
+
+on:
+  push:
+    paths:
+      - 'scripts/blender_sample.py'
+      - '.github/workflows/blender-sample.yml'
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Blender and FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq blender ffmpeg
+          blender --version
+      - name: Render six-second 3D sample
+        run: |
+          mkdir -p output
+          blender --background --python scripts/blender_sample.py
+      - name: QC sample
+        run: |
+          test -s output/blender-video-store-sample.mp4
+          ffprobe -v error -show_entries format=duration:stream=width,height,r_frame_rate -of default=nw=1 output/blender-video-store-sample.mp4
+      - name: Upload sample
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-video-store-sample
+          path: |
+            output/blender-video-store-sample.mp4
+            output/blender-video-store-sample.blend
+          retention-days: 7
+      - name: Send sample to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl --fail --silent --show-error --retry 3 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "video=@output/blender-video-store-sample.mp4" \
+            -F "supports_streaming=true" \
+            -F "caption=🎬 Blender 3D Sample · 6 sec · 9:16 · no AI video credits"
