@@ -1,0 +1,53 @@
+name: R2 Image Library
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: upload or list
+        required: true
+        default: list
+        type: choice
+        options: [list, upload]
+      local_path:
+        description: Repository path to upload (required for upload)
+        required: false
+        type: string
+      object_key:
+        description: R2 object key (optional)
+        required: false
+        type: string
+      prefix:
+        description: Prefix for list action
+        required: false
+        type: string
+
+jobs:
+  r2:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUCKET || 'content-factory-images' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install boto3
+      - name: List library
+        if: ${{ inputs.action == 'list' }}
+        run: python scripts/r2_library.py list --prefix "${{ inputs.prefix }}"
+      - name: Upload image
+        if: ${{ inputs.action == 'upload' }}
+        shell: bash
+        run: |
+          test -n "${{ inputs.local_path }}" || { echo 'local_path is required'; exit 1; }
+          if [ -n "${{ inputs.object_key }}" ]; then
+            python scripts/r2_library.py upload "${{ inputs.local_path }}" --key "${{ inputs.object_key }}"
+          else
+            python scripts/r2_library.py upload "${{ inputs.local_path }}"
+          fi
