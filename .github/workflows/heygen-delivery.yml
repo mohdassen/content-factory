@@ -38,35 +38,21 @@ jobs:
         run: |
           set -euo pipefail
           BRAND=/tmp/brand.png
-
-          if test -s assets/brand/logo.png && \
-             ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png -frames:v 1 -f null - >/dev/null 2>&1; then
-            ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png \
-              -vf "scale=900:-2:force_original_aspect_ratio=decrease" -frames:v 1 "$BRAND"
-            echo "Using validated PNG brand master"
+          if test -s assets/brand/logo.png && ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png -frames:v 1 -f null - >/dev/null 2>&1; then
+            ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png -vf "scale=900:-2:force_original_aspect_ratio=decrease" -frames:v 1 "$BRAND"
           else
-            echo "Repository PNG is missing/corrupt; rebuilding brand from SVG master"
             test -s assets/brand/logo.svg
             rsvg-convert -w 900 -h 900 assets/brand/logo.svg -o "$BRAND"
           fi
-
-          test -s "$BRAND"
           ffmpeg -hide_banner -loglevel error -y -i "$BRAND" -frames:v 1 -f null -
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,pix_fmt \
-            -of default=nw=1 "$BRAND"
-
-          ffmpeg -hide_banner -loglevel error -y -i "$BRAND" \
-            -vf "scale=140:-2:force_original_aspect_ratio=decrease" -frames:v 1 /tmp/wm.png
-          test -s /tmp/wm.png
+          ffmpeg -hide_banner -loglevel error -y -i "$BRAND" -vf "scale=150:-2:force_original_aspect_ratio=decrease" -frames:v 1 /tmp/wm.png
 
       - name: Download and validate HeyGen source
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 5 --retry-all-errors --retry-delay 2 \
-            "$(cat /tmp/video_url)" -o /tmp/source.mp4
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
           test -s /tmp/source.mp4
-          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/source.mp4 | grep -Eq '^[0-9]+([.][0-9]+)?$'
           ffmpeg -hide_banner -loglevel error -i /tmp/source.mp4 -frames:v 1 -f null -
 
       - name: Detect real content ending
@@ -84,53 +70,45 @@ jobs:
           try: start=float(sys.argv[2]); end=float(sys.argv[3])
           except: start=end=None
           cut=dur
-          if start is not None and end is not None and abs(dur-end)<0.6 and dur-start>=1.25:
-              cut=start+0.12
+          if start is not None and end is not None and abs(dur-end)<0.6 and dur-start>=1.25: cut=start+0.12
           print(f'{cut:.3f}')
           PY
           )"
           echo "cut=$CUT" >> "$GITHUB_OUTPUT"
 
-      - name: Render branded main video
+      - name: Render 1080x1920 cinematic master
         shell: bash
         run: |
           set -euo pipefail
           CUT='${{ steps.trim.outputs.cut }}'
-          ffmpeg -hide_banner -loglevel error -y \
-            -i /tmp/source.mp4 -i /tmp/wm.png \
-            -filter_complex "[1:v]format=rgba,colorchannelmixer=aa=0.68[wm];[0:v][wm]overlay=W-w-24:24[v]" \
-            -map "[v]" -map 0:a? -t "$CUT" \
-            -c:v libx264 -preset veryfast -crf 23 -threads 0 -pix_fmt yuv420p \
-            -c:a aac -ar 48000 -ac 2 -b:a 128k -movflags +faststart /tmp/main.mp4
+          ffmpeg -hide_banner -loglevel error -y -i /tmp/source.mp4 -i /tmp/wm.png \
+            -filter_complex "[0:v]split=2[bgsrc][fgsrc];[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,eq=brightness=-0.18:saturation=0.78[bg];[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[base];[1:v]format=rgba,colorchannelmixer=aa=0.62[wm];[base][wm]overlay=W-w-28:28,format=yuv420p[v]" \
+            -map "[v]" -map 0:a? -t "$CUT" -r 30 -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p \
+            -c:a aac -ar 48000 -ac 2 -b:a 160k -movflags +faststart /tmp/main.mp4
           test -s /tmp/main.mp4
-          ffprobe -v error /tmp/main.mp4
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 /tmp/main.mp4)" = "1080"
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 /tmp/main.mp4)" = "1920"
 
       - name: Build cinematic end card
         shell: bash
         run: |
           set -euo pipefail
-          ffmpeg -hide_banner -loglevel error -y \
-            -loop 1 -framerate 30 -i /tmp/brand.png \
-            -f lavfi -i color=c=0x05070b:s=1080x1920:r=30:d=2.6 \
-            -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
-            -filter_complex "[0:v]scale=760:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=0.3:alpha=1,fade=t=out:st=2.2:d=0.4:alpha=1[logo];[1:v][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
-            -map "[v]" -map 2:a -t 2.6 -c:v libx264 -preset veryfast -crf 23 \
-            -c:a aac -ar 48000 -ac 2 -b:a 128k -shortest /tmp/outro.mp4
-          test -s /tmp/outro.mp4
-          ffprobe -v error /tmp/outro.mp4
+          ffmpeg -hide_banner -loglevel error -y -loop 1 -framerate 30 -i /tmp/brand.png \
+            -f lavfi -i color=c=0x05070b:s=1080x1920:r=30:d=2.6 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
+            -filter_complex "[0:v]scale=720:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=0.35:alpha=1,fade=t=out:st=2.15:d=0.45:alpha=1[logo];[1:v][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
+            -map "[v]" -map 2:a -t 2.6 -c:v libx264 -preset medium -crf 20 -c:a aac -ar 48000 -ac 2 -b:a 160k -shortest /tmp/outro.mp4
 
       - name: Join and quality-check final video
         shell: bash
         run: |
           set -euo pipefail
           ffmpeg -hide_banner -loglevel error -y -i /tmp/main.mp4 -i /tmp/outro.mp4 \
-            -filter_complex "[0:v]fps=30,setsar=1[v0];[1:v]fps=30,setsar=1[v1];[0:a]aresample=48000,aformat=channel_layouts=stereo[a0];[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]" \
-            -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 23 \
-            -c:a aac -b:a 128k -movflags +faststart /tmp/final.mp4
+            -filter_complex "[0:v]fps=30,scale=1080:1920,setsar=1[v0];[1:v]fps=30,scale=1080:1920,setsar=1[v1];[0:a]aresample=48000,aformat=channel_layouts=stereo[a0];[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]" \
+            -map "[v]" -map "[a]" -c:v libx264 -preset medium -crf 20 -c:a aac -b:a 160k -movflags +faststart /tmp/final.mp4
           test -s /tmp/final.mp4
-          ffprobe -v error -show_entries stream=codec_type,width,height -show_entries format=duration,size \
-            -of default=nw=1 /tmp/final.mp4
-
+          W="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 /tmp/final.mp4)"
+          H="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 /tmp/final.mp4)"
+          test "$W" = "1080" && test "$H" = "1920"
           ffmpeg -hide_banner -loglevel error -ss 0 -i /tmp/final.mp4 -frames:v 1 -f null -
           DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/final.mp4)"
           SEEK="$(python3 - "$DUR" <<'PY'
@@ -139,6 +117,7 @@ jobs:
           PY
           )"
           ffmpeg -hide_banner -loglevel error -ss "$SEEK" -i /tmp/final.mp4 -frames:v 1 -f null -
+          echo "QC PASS: ${W}x${H}, duration=${DUR}s"
 
       - name: Send branded review to Telegram
         env:
@@ -147,12 +126,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$TELEGRAM_BOT_TOKEN"
-          test -n "$TELEGRAM_CHAT_ID"
-          RESPONSE="$(curl --fail --silent --show-error --retry 3 --retry-all-errors \
-            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "video=@/tmp/final.mp4" \
-            -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ Branding validated + cinematic outro")"
+          RESPONSE="$(curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@/tmp/final.mp4" -F "supports_streaming=true" -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✨ Cinematic Master · 1080×1920 · QC Passed")"
           echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True,d; print('Telegram delivery confirmed:',d['result']['message_id'])"
