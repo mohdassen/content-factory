@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+  <defs>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="18" result="blur"/>
+      <feOffset dy="12" result="off"/>
+      <feColorMatrix in="off" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .45 0" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <circle cx="500" cy="500" r="405" fill="#080A0E" fill-opacity=".94" stroke="#D8B35A" stroke-width="22"/>
+    <circle cx="500" cy="500" r="345" fill="none" stroke="#D8B35A" stroke-opacity=".28" stroke-width="4"/>
+    <text x="500" y="475" text-anchor="middle" direction="rtl" unicode-bidi="bidi-override" font-family="DejaVu Sans, Noto Sans Arabic, sans-serif" font-size="132" font-weight="700" fill="#FFFFFF">خلف الرقم</text>
+    <text x="500" y="650" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="150" font-weight="800" fill="#D8B35A">0</text>
+  </g>
+</svg>
