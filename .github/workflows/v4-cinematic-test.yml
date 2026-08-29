@@ -1,0 +1,73 @@
+name: Content Factory V4 Cinematic Test
+
+on:
+  push:
+    paths:
+      - 'scripts/render_item_v4.py'
+      - 'config/cinematic_style_v4.json'
+      - '.github/workflows/v4-cinematic-test.yml'
+      - '.v4-trigger/**'
+  workflow_dispatch:
+
+jobs:
+  render-v4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip edge-tts pillow
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core jq librsvg2-bin
+      - name: Validate V4 style bible
+        run: |
+          jq -e '.profile == "khalf-al-raqam-v4"' config/cinematic_style_v4.json >/dev/null
+          jq -e '.format.resolution == "1080x1920"' config/cinematic_style_v4.json >/dev/null
+          jq -e '.visual.white_backgrounds == false' config/cinematic_style_v4.json >/dev/null
+      - name: Resolve test story
+        id: story
+        run: |
+          ID=007
+          STORY_DIR="$(find content -maxdepth 1 -type d -name "${ID}-*" | head -n1)"
+          test -n "$STORY_DIR"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "slug=$(basename "$STORY_DIR")" >> "$GITHUB_OUTPUT"
+      - name: Stage independent 9x16 masters
+        run: |
+          python scripts/stage_library_assets.py --id '007'
+          test "$(find assets/stories/${{ steps.story.outputs.slug }}/scenes -maxdepth 1 -type f -name '*.webp' | wc -l)" -eq 8
+      - name: Generate narration and real timing
+        run: python scripts/generate_voice_item.py --id '007'
+      - name: Render V4 cinematic master
+        run: python scripts/render_item_v4.py --id '007'
+      - name: V4 technical gate
+        run: |
+          VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
+          test -s "$VIDEO"
+          W="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$VIDEO")"
+          H="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$VIDEO")"
+          FPS="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$VIDEO")"
+          test "$W" = 1080
+          test "$H" = 1920
+          test "$FPS" = 30/1
+          python scripts/qc_video.py --id '007' --min-duration 35 --max-duration 75
+      - name: Upload V4 review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 007-v4-cinematic-${{ github.run_number }}
+          retention-days: 30
+          path: |
+            output/
+            config/cinematic_style_v4.json
+      - name: Send V4 review to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          VIDEO="output/${{ steps.story.outputs.slug }}-preview.mp4"
+          RESPONSE="$(curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@${VIDEO}" -F "supports_streaming=true" -F "caption=🎬 خلف الرقم | V4 Cinematic DataStory Preview | 1080×1920 · 30fps")"
+          echo "$RESPONSE" | jq -e '.ok == true' >/dev/null
