@@ -1,0 +1,47 @@
+name: Blender V3 Asset Sample
+
+on:
+  push:
+    paths:
+      - 'scripts/blender_v3.py'
+      - 'assets/v3/**'
+      - '.github/workflows/blender-v3.yml'
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Blender and FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq blender ffmpeg libegl1 libgl1
+          blender --version
+      - name: Build and render V3 sample
+        run: |
+          mkdir -p output
+          blender --background --python scripts/blender_v3.py
+      - name: QC V3 sample
+        run: |
+          test -s output/blender-video-store-v3.mp4
+          ffprobe -v error -show_entries format=duration:stream=width,height,r_frame_rate -of default=nw=1 output/blender-video-store-v3.mp4
+      - name: Upload V3 sample
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-video-store-v3
+          path: |
+            output/blender-video-store-v3.mp4
+            output/blender-video-store-v3.blend
+          retention-days: 7
+      - name: Send V3 sample to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl --fail --silent --show-error --retry 3 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "video=@output/blender-video-store-v3.mp4" \
+            -F "supports_streaming=true" \
+            -F "caption=🎬 Content Factory V3 · asset-driven Blender sample · 5 sec · 9:16"
