@@ -1,0 +1,11 @@
+{
+  "profile": "khalf-al-raqam-v4",
+  "format": {"aspect_ratio":"9:16","resolution":"1080x1920","fps":30,"target_duration_sec":[40,60]},
+  "visual": {"look":"premium dark documentary","background":"deep blacks","accents":["cyan","gold"],"contrast":"high","grain":"subtle","white_backgrounds":false,"floating_small_images":false,"native_vertical_assets":true},
+  "motion": {"static_scenes_allowed":false,"default":"slow-dolly-in","zoom_range":[1.02,1.08],"parallax_when_possible":true,"purposeful_transitions":true},
+  "captions": {"mobile_first":true,"safe_zone":"lower-middle","max_lines":2,"highlight_keywords_only":true,"numbers_emphasis":"large"},
+  "presenter": {"default_enabled":false,"max_share_percent":15,"white_background":false,"required_environment":"dark branded virtual studio"},
+  "audio": {"layers":["narration","background-score","sfx"],"number_reveal":"subtle-bass-impact","transitions":"subtle-whoosh","payoff":"music-rise-or-drop"},
+  "outro": {"duration_sec":[1.2,1.8],"signature":"الرقم القادم أغرب.","static_freeze":false},
+  "qc": {"minimum_score":8.3,"dimensions_required":"1080x1920","audio_required":true,"logo_required":true,"captions_safe_zone_required":true,"frozen_ending_allowed":false}
+}
