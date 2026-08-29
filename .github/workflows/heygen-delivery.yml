@@ -113,7 +113,7 @@ jobs:
             -loop 1 -framerate 30 -i /tmp/brand.png \
             -f lavfi -i color=c=0x05070b:s=1080x1920:r=30:d=2.6 \
             -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
-            -filter_complex "[0:v]scale=760:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=.3:alpha=1,fade=t=out:st=2.2:d=.4:alpha=1[logo];[1:v][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
+            -filter_complex "[0:v]scale=760:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=0.3:alpha=1,fade=t=out:st=2.2:d=0.4:alpha=1[logo];[1:v][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
             -map "[v]" -map 2:a -t 2.6 -c:v libx264 -preset veryfast -crf 23 \
             -c:a aac -ar 48000 -ac 2 -b:a 128k -shortest /tmp/outro.mp4
           test -s /tmp/outro.mp4
