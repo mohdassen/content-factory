@@ -6,139 +6,70 @@ bpy.ops.object.delete(use_global=False)
 
 
 def mat(name, color, metallic=0.0, rough=.45, emission=None):
-    m = bpy.data.materials.new(name)
-    m.diffuse_color = (*color, 1)
-    m.use_nodes = True
-    bs = m.node_tree.nodes.get('Principled BSDF')
-    bs.inputs['Base Color'].default_value = (*color, 1)
-    bs.inputs['Metallic'].default_value = metallic
-    bs.inputs['Roughness'].default_value = rough
+    m=bpy.data.materials.new(name); m.diffuse_color=(*color,1); m.use_nodes=True
+    bs=m.node_tree.nodes.get('Principled BSDF'); bs.inputs['Base Color'].default_value=(*color,1)
+    bs.inputs['Metallic'].default_value=metallic; bs.inputs['Roughness'].default_value=rough
     if emission:
-        if 'Emission Color' in bs.inputs:
-            bs.inputs['Emission Color'].default_value = (*emission, 1)
-        elif 'Emission' in bs.inputs:
-            bs.inputs['Emission'].default_value = (*emission, 1)
-        if 'Emission Strength' in bs.inputs:
-            bs.inputs['Emission Strength'].default_value = 3.0
+        k='Emission Color' if 'Emission Color' in bs.inputs else 'Emission'
+        if k in bs.inputs: bs.inputs[k].default_value=(*emission,1)
+        if 'Emission Strength' in bs.inputs: bs.inputs['Emission Strength'].default_value=4.0
     return m
 
-
-def cube(name, loc, scale, material, bevel=.06):
-    bpy.ops.mesh.primitive_cube_add(location=loc)
-    o = bpy.context.object
-    o.name = name
-    o.scale = scale
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+def cube(name,loc,scale,material,bevel=.04):
+    bpy.ops.mesh.primitive_cube_add(location=loc); o=bpy.context.object; o.name=name; o.scale=scale
+    bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
     if bevel:
-        mod = o.modifiers.new('soft edges', 'BEVEL')
-        mod.width = bevel
-        mod.segments = 2
-    o.data.materials.append(material)
-    return o
+        md=o.modifiers.new('bevel','BEVEL'); md.width=bevel; md.segments=2
+    o.data.materials.append(material); return o
 
+def human(name,x,y,shirt,phase=0):
+    skin=mat(name+' skin',(.34,.16,.09),rough=.62); cloth=mat(name+' cloth',shirt,rough=.7); dark=mat(name+' pants',(.02,.025,.035),rough=.8)
+    torso=cube(name+' torso',(x,y,1.42),(.25,.16,.45),cloth,.1)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=16, location=(x,y,2.02)); head=bpy.context.object; head.scale=(.20,.20,.25); head.data.materials.append(skin)
+    for dx in (-.12,.12): cube(name+' leg',(x+dx,y,.61),(.075,.09,.46),dark,.04)
+    for dx in (-.31,.31):
+        arm=cube(name+' arm',(x+dx,y,1.48),(.065,.065,.34),skin,.04); arm.rotation_euler[1]=math.radians((-18 if dx<0 else 18)+phase); arm.keyframe_insert(data_path='rotation_euler',frame=1); arm.rotation_euler[1]+=math.radians(10); arm.keyframe_insert(data_path='rotation_euler',frame=120)
+    torso.rotation_euler[2]=math.radians(phase*.35); torso.keyframe_insert(data_path='rotation_euler',frame=1); torso.rotation_euler[2]+=math.radians(3); torso.keyframe_insert(data_path='rotation_euler',frame=120)
 
-def human(name, x, y, shirt):
-    skin = mat(name+'skin', (0.35, 0.16, 0.09), rough=.65)
-    cloth = mat(name+'cloth', shirt, rough=.7)
-    dark = mat(name+'pants', (0.025, 0.03, 0.04), rough=.8)
-    cube(name+'torso', (x, y, 1.45), (.28, .18, .48), cloth, .12)
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=20, ring_count=12, location=(x, y, 2.08))
-    head = bpy.context.object
-    head.scale = (.22, .22, .27)
-    head.data.materials.append(skin)
-    for dx in (-.13, .13):
-        cube(name+'leg', (x+dx, y, .62), (.09, .1, .48), dark, .05)
-    arm = cube(name+'arm', (x+.34, y, 1.55), (.08, .08, .38), skin, .05)
-    arm.rotation_euler[1] = math.radians(-25)
-    arm.keyframe_insert(data_path='rotation_euler', frame=1)
-    arm.rotation_euler[1] = math.radians(-45)
-    arm.keyframe_insert(data_path='rotation_euler', frame=144)
+def track(obj,target): obj.rotation_euler=(Vector(target)-obj.location).to_track_quat('-Z','Y').to_euler()
 
+floor=mat('polished charcoal floor',(.025,.032,.042),.25,.18); wall=mat('deep navy walls',(.035,.045,.065),rough=.78); shelf=mat('black metal shelving',(.025,.028,.035),.3,.28)
+blue=mat('blue cases',(.02,.12,.38)); gold=mat('amber cases',(.62,.23,.025)); red=mat('red cases',(.38,.025,.018)); cream=mat('cream cases',(.58,.52,.40)); cyan=mat('cyan practical',(.015,.18,.50),emission=(.01,.18,1)); warm=mat('warm practical',(.45,.16,.025),emission=(1,.22,.025))
 
-floor = mat('polished floor', (.035, .045, .055), .25, .23)
-wall = mat('walls', (.055, .065, .08), rough=.72)
-shelf = mat('shelves', (.055, .06, .07), .15, .35)
-blue = mat('blue cases', (.025, .16, .42))
-gold = mat('warm cases', (.62, .28, .035))
-red = mat('red cases', (.42, .035, .025))
-neon = mat('neon', (.03, .25, .72), emission=(.02, .2, 1))
+cube('floor',(0,4,-.08),(5.2,9,.08),floor,0); cube('back',(0,12,2.5),(5.2,.12,2.6),wall,0); cube('left',(-5.1,4,2.5),(.12,8,2.6),wall,0); cube('right',(5.1,4,2.5),(.12,8,2.6),wall,0)
+# luminous entrance frame / nostalgic storefront
+cube('entrance top',(0,-2.2,4.25),(2.8,.08,.07),cyan,.02); cube('entrance L',(-2.75,-2.2,2.2),(.07,.08,2.0),cyan,.02); cube('entrance R',(2.75,-2.2,2.2),(.07,.08,2.0),cyan,.02)
+# wall shelves with denser case detail
+for sx in (-3.55,3.55):
+    for sy in (1.7,4.5,7.3,10.1):
+        cube('shelf',(sx,sy,1.42),(1.18,.32,1.42),shelf,.025)
+        for row in range(5):
+            for col in range(10): cube('case',(sx-.98+col*.215,sy-.35,.28+row*.54),(.078,.026,.215),(blue,gold,red,cream)[(row*3+col)%4],.008)
+# central aisles
+for sy in (3.1,6.1,9.0):
+    cube('center rack',(0,sy,.82),(1.55,.42,.82),shelf,.035)
+    for side in (-1,1):
+        for col in range(12): cube('dvd',(-1.3+col*.235,sy+side*.45,1.43),(.075,.025,.225),(blue,gold,red,cream)[(col+side)%4],.006)
+# checkout and glowing back-wall accents
+cube('counter',(0,10.8,.62),(2.45,.58,.62),shelf,.07); cube('counter glow',(0,10.17,.88),(1.7,.025,.05),warm,.01)
+for x in (-3,-1,1,3): cube('ceiling practical',(x,4.8,4.72),(.48,3.7,.025),cyan,.015)
 
-cube('floor', (0, 3, -.08), (5.2, 9, .08), floor, 0)
-cube('back', (0, 11.8, 2.5), (5.2, .12, 2.6), wall, 0)
-cube('left', (-5.1, 4, 2.5), (.12, 8, 2.6), wall, 0)
-cube('right', (5.1, 4, 2.5), (.12, 8, 2.6), wall, 0)
+human('browser A',-1.8,4.0,(.045,.08,.15),-12); human('browser B',1.65,7.15,(.18,.055,.025),15); human('employee',.3,9.9,(.025,.10,.24),-5)
 
-for sx in (-3.25, 3.25):
-    for sy in (2, 5.2, 8.4):
-        cube('shelf', (sx, sy, 1.25), (1.15, .35, 1.25), shelf, .03)
-        for row in range(4):
-            for col in range(9):
-                cube('case', (sx-.92+col*.23, sy-.38, .35+row*.57), (.09, .035, .23), (blue, gold, red)[(row+col) % 3], .015)
+# cinematic camera: lower eye level, gentle lateral parallax and forward dolly
+bpy.ops.object.camera_add(location=(-.55,-3.6,1.72)); cam=bpy.context.object; bpy.context.scene.camera=cam; cam.data.lens=32; cam.data.sensor_width=32; cam.data.dof.use_dof=True; cam.data.dof.focus_distance=7.0; cam.data.dof.aperture_fstop=3.2
+track(cam,(0,5.2,1.35)); cam.keyframe_insert(data_path='location',frame=1); cam.keyframe_insert(data_path='rotation_euler',frame=1)
+cam.location=(.42,1.25,1.68); track(cam,(0,7.4,1.38)); cam.keyframe_insert(data_path='location',frame=120); cam.keyframe_insert(data_path='rotation_euler',frame=120)
 
-for sy in (3.4, 6.8):
-    cube('center rack', (0, sy, .8), (1.5, .48, .8), shelf, .04)
-    for col in range(11):
-        cube('dvd', (-1.25+col*.25, sy-.5, 1.42), (.09, .035, .24), (blue, gold, red)[col % 3], .01)
+# layered lighting: cool key, warm backlight, aisle pools
+bpy.ops.object.light_add(type='AREA',location=(0,.5,4.1)); key=bpy.context.object; key.data.energy=1050; key.data.shape='RECTANGLE'; key.data.size=6; key.data.color=(.55,.72,1)
+bpy.ops.object.light_add(type='AREA',location=(0,10.2,3.8)); back=bpy.context.object; back.data.energy=1450; back.data.size=4.5; back.data.color=(1,.32,.09); track(back,(0,6.5,1.2))
+for x,y in ((-2.7,4),(2.7,6.5),(-2.3,9)):
+    bpy.ops.object.light_add(type='AREA',location=(x,y,3.2)); l=bpy.context.object; l.data.energy=420; l.data.size=2.0; l.data.color=(.18,.35,1); track(l,(0,y,1))
 
-cube('counter', (0, 10.5, .62), (2.5, .55, .62), shelf, .08)
-for x in (-3, -1, 1, 3):
-    cube('light', (x, 4.8, 4.75), (.62, 3.8, .035), neon, .02)
-
-human('customerA', -1.7, 4.2, (.08, .12, .18))
-human('customerB', 1.7, 7.3, (.18, .07, .035))
-human('employee', 0, 9.8, (.03, .12, .28))
-
-
-def track(obj, target):
-    obj.rotation_euler = (Vector(target)-obj.location).to_track_quat('-Z', 'Y').to_euler()
-
-
-bpy.ops.object.camera_add(location=(0, -4.2, 2))
-cam = bpy.context.object
-bpy.context.scene.camera = cam
-cam.data.lens = 28
-cam.data.sensor_width = 32
-track(cam, (0, 5.5, 1.35))
-cam.keyframe_insert(data_path='location', frame=1)
-cam.keyframe_insert(data_path='rotation_euler', frame=1)
-cam.location = (.25, 1.2, 1.85)
-track(cam, (0, 7.2, 1.45))
-cam.keyframe_insert(data_path='location', frame=144)
-cam.keyframe_insert(data_path='rotation_euler', frame=144)
-
-bpy.ops.object.light_add(type='AREA', location=(0, 1.5, 4.2))
-key = bpy.context.object
-key.data.energy = 950
-key.data.shape = 'RECTANGLE'
-key.data.size = 7
-key.data.color = (.68, .8, 1)
-
-bpy.ops.object.light_add(type='AREA', location=(0, 9, 3.8))
-fill = bpy.context.object
-fill.data.energy = 1200
-fill.data.size = 5
-fill.data.color = (1, .48, .18)
-track(fill, (0, 6, 1))
-
-scene = bpy.context.scene
-scene.world.color = (.004, .006, .012)
-# Ubuntu 24.04 runner currently installs Blender 4.0.2 where the Eevee enum is BLENDER_EEVEE.
-scene.render.engine = 'BLENDER_EEVEE'
-scene.render.resolution_x = 540
-scene.render.resolution_y = 960
-scene.render.resolution_percentage = 100
-scene.render.fps = 24
-scene.frame_start = 1
-scene.frame_end = 144
-scene.render.image_settings.file_format = 'FFMPEG'
-scene.render.ffmpeg.format = 'MPEG4'
-scene.render.ffmpeg.codec = 'H264'
-scene.render.ffmpeg.constant_rate_factor = 'MEDIUM'
-scene.render.filepath = 'output/blender-video-store-sample.mp4'
-try:
-    scene.view_settings.look = 'AgX - Medium High Contrast'
-except Exception:
-    pass
-
-bpy.ops.wm.save_as_mainfile(filepath='output/blender-video-store-sample.blend')
-bpy.ops.render.render(animation=True)
+scene=bpy.context.scene; scene.world.color=(.002,.004,.009); scene.render.engine='BLENDER_EEVEE'; scene.render.resolution_x=540; scene.render.resolution_y=960; scene.render.resolution_percentage=100; scene.render.fps=24; scene.frame_start=1; scene.frame_end=120
+scene.render.image_settings.file_format='FFMPEG'; scene.render.ffmpeg.format='MPEG4'; scene.render.ffmpeg.codec='H264'; scene.render.ffmpeg.constant_rate_factor='MEDIUM'; scene.render.filepath='output/blender-video-store-sample.mp4'
+scene.render.film_transparent=False
+try: scene.view_settings.look='AgX - Medium High Contrast'
+except Exception: pass
+bpy.ops.wm.save_as_mainfile(filepath='output/blender-video-store-sample.blend'); bpy.ops.render.render(animation=True)
