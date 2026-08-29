@@ -14,11 +14,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install Blender and FFmpeg
+      - name: Install Blender, NumPy and FFmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq blender ffmpeg libegl1 libgl1
+          sudo apt-get install -y -qq blender ffmpeg libegl1 libgl1 python3-numpy
           blender --version
+          python3 - <<'PY'
+          import numpy
+          print('system numpy', numpy.__version__)
+          PY
+          BLENDER_PY=$(blender --background --python-expr "import sys; print(sys.executable)" 2>/dev/null | tail -n 1)
+          "$BLENDER_PY" -m ensurepip --upgrade || true
+          "$BLENDER_PY" -m pip install --upgrade pip numpy
+          "$BLENDER_PY" -c "import numpy; print('blender numpy', numpy.__version__)"
       - name: Build and render V3 sample
         run: |
           mkdir -p output
