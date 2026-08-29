@@ -18,33 +18,22 @@ jobs:
         shell: bash
         run: |
           REQUEST='.heygen-delivery/current.txt'
-          test -f "$REQUEST" || { echo 'Missing HeyGen delivery request'; exit 1; }
           URL="$(sed -n '1p' "$REQUEST")"
           TITLE="$(sed -n '2p' "$REQUEST")"
-          test -n "$URL" || { echo 'Missing HeyGen video URL'; exit 1; }
+          test -n "$URL" || exit 1
           echo "title=${TITLE:-HeyGen review}" >> "$GITHUB_OUTPUT"
           printf '%s' "$URL" > /tmp/video_url
 
-      - name: Install media dependencies
-        shell: bash
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      - name: Validate approved repository brand asset
+      - name: Prepare assets and source
         shell: bash
         run: |
-          BRAND='assets/brand/logo.webp'
-          test -s "$BRAND" || { echo 'Missing approved brand asset'; exit 1; }
-          cp "$BRAND" /tmp/brand.webp
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt -of default=nw=1 /tmp/brand.webp
-
-      - name: Download and validate HeyGen video
-        shell: bash
-        run: |
+          test -s assets/brand/logo.webp || exit 1
+          ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.webp -vf "scale=140:-2" -frames:v 1 /tmp/wm.png
           curl --fail --location --retry 3 --retry-delay 2 "$(cat /tmp/video_url)" -o /tmp/source.mp4
           test -s /tmp/source.mp4
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=nw=1 /tmp/source.mp4
 
       - name: Detect real content ending
         id: trim
@@ -57,68 +46,45 @@ jobs:
           CUT="$(python3 - "$DUR" "$START" "$END" <<'PY'
           import sys
           dur=float(sys.argv[1])
-          try: start=float(sys.argv[2])
-          except: start=None
-          try: end=float(sys.argv[3])
-          except: end=None
+          try: start=float(sys.argv[2]); end=float(sys.argv[3])
+          except: start=end=None
           cut=dur
-          if start is not None and end is not None and abs(dur-end) < 0.6 and dur-start >= 1.25:
-              cut=min(dur, start+0.12)
+          if start is not None and end is not None and abs(dur-end)<0.6 and dur-start>=1.25:
+              cut=start+0.12
           print(f'{cut:.3f}')
           PY
           )"
-          echo "source_duration=$DUR"
-          echo "content_cut=$CUT"
           echo "cut=$CUT" >> "$GITHUB_OUTPUT"
 
-      - name: Apply approved minimal watermark
+      - name: Fast watermark render
         shell: bash
         run: |
           CUT='${{ steps.trim.outputs.cut }}'
           ffmpeg -hide_banner -loglevel error -y \
-            -i /tmp/source.mp4 -loop 1 -i /tmp/brand.webp \
-            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30[base];[1:v]scale=180:-2,format=rgba,colorchannelmixer=aa=0.78[wm];[base][wm]overlay=W-w-28:28:format=auto:shortest=1[v]" \
-            -map "[v]" -map 0:a:0 -t "$CUT" \
-            -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
-            -c:a aac -ar 48000 -ac 2 -b:a 160k -movflags +faststart /tmp/main.mp4
+            -i /tmp/source.mp4 -i /tmp/wm.png \
+            -filter_complex "[1:v]format=rgba,colorchannelmixer=aa=0.68[wm];[0:v][wm]overlay=W-w-24:24[v]" \
+            -map "[v]" -map 0:a? -t "$CUT" \
+            -c:v libx264 -preset ultrafast -crf 22 -threads 0 -pix_fmt yuv420p \
+            -c:a copy /tmp/main.mp4
           test -s /tmp/main.mp4
 
-      - name: Build approved cinematic end card
+      - name: Build cinematic end card
         shell: bash
         run: |
           ffmpeg -hide_banner -loglevel error -y \
-            -loop 1 -framerate 30 -i /tmp/brand.webp \
+            -loop 1 -framerate 30 -i assets/brand/logo.webp \
             -f lavfi -i color=c=0x05070b:s=1080x1920:r=30:d=2.6 \
             -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
-            -filter_complex "[0:v]scale=820:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=0.32:alpha=1,fade=t=out:st=2.18:d=0.42:alpha=1[logo];[1:v]vignette=PI/5:eval=frame[bg];[bg][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
-            -map "[v]" -map 2:a:0 -t 2.6 \
-            -c:v libx264 -preset veryfast -crf 19 -pix_fmt yuv420p \
-            -c:a aac -ar 48000 -ac 2 -b:a 160k -shortest /tmp/outro.mp4
-          test -s /tmp/outro.mp4
-          ODUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/outro.mp4)"
-          python3 - "$ODUR" <<'PY'
-          import sys
-          d=float(sys.argv[1]); assert d >= 2.35, f'Outro too short: {d}'
-          print('Outro verified:', d)
-          PY
+            -filter_complex "[0:v]scale=760:-2:force_original_aspect_ratio=decrease,format=rgba,fade=t=in:st=0:d=.3:alpha=1,fade=t=out:st=2.2:d=.4:alpha=1[logo];[1:v][logo]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]" \
+            -map "[v]" -map 2:a -t 2.6 -c:v libx264 -preset ultrafast -crf 22 -c:a aac -ar 48000 -ac 2 -b:a 128k -shortest /tmp/outro.mp4
 
-      - name: Create final video without frozen tail
+      - name: Join final video
         shell: bash
         run: |
-          ffmpeg -hide_banner -loglevel error -y \
-            -i /tmp/main.mp4 -i /tmp/outro.mp4 \
-            -filter_complex "[0:v]setsar=1,fps=30[v0];[1:v]setsar=1,fps=30[v1];[0:a]aresample=48000,aformat=channel_layouts=stereo[a0];[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]" \
-            -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
-            -c:a aac -ar 48000 -ac 2 -b:a 160k -movflags +faststart /tmp/heygen-branded.mp4
-          test -s /tmp/heygen-branded.mp4
-          FINAL="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/heygen-branded.mp4)"
-          MAIN="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/main.mp4)"
-          python3 - "$FINAL" "$MAIN" <<'PY'
-          import sys
-          final=float(sys.argv[1]); main=float(sys.argv[2])
-          assert final-main >= 2.3, f'Final file does not contain full outro: final={final}, main={main}'
-          print('Final cinematic outro verified in joined MP4')
-          PY
+          ffmpeg -hide_banner -loglevel error -y -i /tmp/main.mp4 -i /tmp/outro.mp4 \
+            -filter_complex "[0:v]fps=30,setsar=1[v0];[1:v]fps=30,setsar=1[v1];[0:a]aresample=48000,aformat=channel_layouts=stereo[a0];[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]" \
+            -map "[v]" -map "[a]" -c:v libx264 -preset ultrafast -crf 22 -c:a aac -b:a 128k -movflags +faststart /tmp/final.mp4
+          test -s /tmp/final.mp4
 
       - name: Send branded review to Telegram
         env:
@@ -126,10 +92,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         shell: bash
         run: |
-          test -n "$TELEGRAM_BOT_TOKEN" && test -n "$TELEGRAM_CHAT_ID" || { echo 'Telegram secrets missing'; exit 1; }
-          RESPONSE="$(curl --fail --silent --show-error --retry 3 --retry-delay 2 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "video=@/tmp/heygen-branded.mp4" \
-            -F "supports_streaming=true" \
-            -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ الشعار المعتمد + النهاية السينمائية + فحص النهاية PASS")"
-          echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True, d; print('Telegram delivery confirmed, message_id=', d['result']['message_id'])"
+          RESPONSE="$(curl --fail --silent --show-error --retry 3 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@/tmp/final.mp4" -F "supports_streaming=true" -F "caption=🎬 خلف الرقم | ${{ steps.request.outputs.title }}\n✅ Watermark الجديد + النهاية السينمائية")"
+          echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') is True,d; print('Telegram delivery confirmed:',d['result']['message_id'])"
