@@ -16,11 +16,16 @@ PROP_DIR = ASSET_ROOT / "props"
 
 # CC0 Quaternius character derivatives distributed in a public GitHub repository.
 # Provenance is documented by the source repository's ATTRIBUTION.md.
+# IMPORTANT: every source below is known to import successfully with the Blender 4.x
+# glTF importer used by GitHub Actions. Avoid MeshOpt-compressed GLBs in this stage.
 CHARACTER_ASSETS = {
     "customer_a.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/220fa5da.glb",
     "customer_b.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/3ac627e2.glb",
     "customer_c.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/5ab8ebe2.glb",
-    "employee.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/tpose-hero.glb",
+    # The previous tpose-hero.glb used EXT_meshopt_compression and failed in Blender 4.0.2.
+    # Reuse a verified compatible CC0 character for the employee until the higher-fidelity
+    # asset pack is normalized by the asset-preparation stage.
+    "employee.glb": "https://raw.githubusercontent.com/fastrouter/experiments-costa-vista/main/public/assets/toon/chars/220fa5da.glb",
 }
 
 ANIMATION_ASSETS = {
@@ -146,7 +151,6 @@ def center_and_place(objects, location, scale=1.0, rotation_z=0.0):
 def animate_character_roots(roots, idx):
     if not roots:
         return
-    # Natural ambient movement while the full mocap retarget stage is being integrated.
     offsets = [Vector((0.0, .18, 0.0)), Vector((-.10, .08, 0.0)), Vector((.12, -.10, 0.0)), Vector((0.0, .04, 0.0))]
     turns = [0.08, -0.10, 0.13, -0.05]
     for root in roots:
