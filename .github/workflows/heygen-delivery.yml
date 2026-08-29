@@ -39,7 +39,6 @@ jobs:
           set -euo pipefail
           BRAND=/tmp/brand.png
 
-          # Prefer the repository PNG only if FFmpeg can fully decode it.
           if test -s assets/brand/logo.png && \
              ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png -frames:v 1 -f null - >/dev/null 2>&1; then
             ffmpeg -hide_banner -loglevel error -y -i assets/brand/logo.png \
@@ -68,7 +67,7 @@ jobs:
             "$(cat /tmp/video_url)" -o /tmp/source.mp4
           test -s /tmp/source.mp4
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/source.mp4 | grep -Eq '^[0-9]+([.][0-9]+)?$'
-          ffmpeg -hide_banner -loglevel error -vframes 1 -i /tmp/source.mp4 -f null -
+          ffmpeg -hide_banner -loglevel error -i /tmp/source.mp4 -frames:v 1 -f null -
 
       - name: Detect real content ending
         id: trim
@@ -132,7 +131,6 @@ jobs:
           ffprobe -v error -show_entries stream=codec_type,width,height -show_entries format=duration,size \
             -of default=nw=1 /tmp/final.mp4
 
-          # Decode both ends so a structurally broken file cannot reach Telegram.
           ffmpeg -hide_banner -loglevel error -ss 0 -i /tmp/final.mp4 -frames:v 1 -f null -
           DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 /tmp/final.mp4)"
           SEEK="$(python3 - "$DUR" <<'PY'
