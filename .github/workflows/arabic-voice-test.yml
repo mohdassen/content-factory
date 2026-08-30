@@ -1,0 +1,49 @@
+name: Arabic Voice Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: Arabic text to synthesize
+        required: false
+        default: "تخيّل أنك تفتح عينيك مع أول ضوء للفجر. أنت في بغداد، قبل أكثر من ألف عام. تبدأ الأزقة بالاستيقاظ ببطء، وتصل إليك أصوات الباعة والقوارب على دجلة."
+
+jobs:
+  generate-voices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Edge TTS and FFmpeg
+        run: |
+          python -m pip install --upgrade pip
+          pip install edge-tts
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Generate three Arabic voice samples
+        env:
+          SAMPLE_TEXT: ${{ github.event.inputs.text }}
+        run: |
+          mkdir -p voice_samples
+          edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz  --text "$SAMPLE_TEXT" --write-media voice_samples/01_hamed_calm.mp3
+          edge-tts --voice ar-SA-HamedNeural --rate=-18% --pitch=-18Hz --text "$SAMPLE_TEXT" --write-media voice_samples/02_hamed_deep.mp3
+          edge-tts --voice ar-SA-ZariyahNeural --rate=-14% --pitch=-4Hz --text "$SAMPLE_TEXT" --write-media voice_samples/03_zariyah_soft.mp3
+
+      - name: Validate audio files
+        run: |
+          set -e
+          for f in voice_samples/*.mp3; do
+            test -s "$f"
+            ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$f"
+          done
+
+      - name: Upload voice samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: arabic-voice-samples
+          path: voice_samples/*.mp3
+          retention-days: 7
