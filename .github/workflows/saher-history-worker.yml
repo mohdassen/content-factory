@@ -8,6 +8,7 @@ on:
     paths:
       - 'episodes/**/request.json'
       - 'episodes/**/chapters/**'
+      - 'episodes/**/images/**'
       - '.github/workflows/saher-history-worker.yml'
 
 permissions:
@@ -46,7 +47,6 @@ jobs:
     env:
       EPISODE: ${{ needs.discover.outputs.episode }}
       REQUEST_ID: ${{ needs.discover.outputs.request_id }}
-      HF_TOKEN: ${{ secrets.HF_Token }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
@@ -59,21 +59,61 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
-          python -m pip install --upgrade edge-tts huggingface_hub pillow
+          python -m pip install --upgrade edge-tts pillow
 
-      - name: Validate episode package
+      - name: Validate episode package and local ChatGPT images
         shell: bash
         run: |
           set -euo pipefail
           test -s "episodes/$EPISODE/request.json"
-          test "$(find episodes/$EPISODE/chapters -name '*.txt' -type f | wc -l)" -ge 1
           python3 - <<'PY'
           import json, os, pathlib
-          p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
-          d=json.loads(p.read_text(encoding='utf-8'))
-          assert d['status']=='pending'
+          root=pathlib.Path('episodes')/os.environ['EPISODE']
+          d=json.loads((root/'request.json').read_text(encoding='utf-8'))
+          assert d['status']=='pending', d.get('status')
+          assert d.get('image_provider')=='chatgpt_builtin_only', d.get('image_provider')
+          chapters=sorted((root/'chapters').glob('*.txt'))
+          assert chapters, 'No chapters found'
+          missing=[]
+          for i,_ in enumerate(chapters,1):
+              if not any((root/'images'/f'{i:02d}{ext}').exists() for ext in ('.jpg','.jpeg','.png','.webp')):
+                  missing.append(i)
+          assert not missing, f'Missing ChatGPT-generated chapter images: {missing}'
           print('Episode:', d.get('title'))
           print('Target minutes:', d.get('target_minutes'))
+          print('Local images ready:', len(chapters))
+          PY
+
+      - name: Prepare local chapter images
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/images
+          python3 - <<'PY'
+          import json, os, pathlib
+          from PIL import Image
+          root=pathlib.Path('episodes')/os.environ['EPISODE']
+          chapters=sorted((root/'chapters').glob('*.txt'))
+          manifest=[]
+          for i,_ in enumerate(chapters,1):
+              src=None
+              for ext in ('.jpg','.jpeg','.png','.webp'):
+                  p=root/'images'/f'{i:02d}{ext}'
+                  if p.exists(): src=p; break
+              assert src is not None
+              img=Image.open(src).convert('RGB')
+              w,h=img.size
+              target=16/9
+              if w/h > target:
+                  nw=int(h*target); left=(w-nw)//2; img=img.crop((left,0,left+nw,h))
+              else:
+                  nh=int(w/target); top=(h-nh)//2; img=img.crop((0,top,w,top+nh))
+              img=img.resize((1280,720),Image.Resampling.LANCZOS)
+              out=pathlib.Path('build/images')/f'{i:02d}.jpg'
+              img.save(out,'JPEG',quality=95,optimize=True)
+              manifest.append({'chapter':i,'source':'chatgpt_builtin_only','input':str(src),'output':str(out)})
+          pathlib.Path('build/image_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print('Prepared',len(manifest),'ChatGPT images')
           PY
 
       - name: Generate Hamed Calm narration by chapter
@@ -86,38 +126,9 @@ jobs:
             i=$((i+1))
             edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz --file "$f" --write-media "build/audio/$(printf '%02d' $i).mp3"
           done
-          printf '' > build/audio/list.txt
+          : > build/audio/list.txt
           for f in build/audio/[0-9][0-9].mp3; do printf "file '%s'\n" "$(realpath "$f")" >> build/audio/list.txt; done
           ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/audio/list.txt -c:a libmp3lame -b:a 128k build/narration.mp3
-
-      - name: Generate cinematic chapter images with FLUX when missing
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/images
-          python3 - <<'PY'
-          import json, os, pathlib
-          from huggingface_hub import InferenceClient
-          from PIL import Image
-          root=pathlib.Path('episodes')/os.environ['EPISODE']
-          req=json.loads((root/'request.json').read_text(encoding='utf-8'))
-          chapters=sorted((root/'chapters').glob('*.txt'))
-          prompts=req.get('visual_prompts',[])
-          token=os.environ.get('HF_TOKEN','')
-          client=InferenceClient(provider='auto', api_key=token) if token else None
-          for i,ch in enumerate(chapters,1):
-              local=root/'images'/f'{i:02d}.jpg'
-              out=pathlib.Path('build/images')/f'{i:02d}.jpg'
-              if local.exists():
-                  Image.open(local).convert('RGB').save(out,quality=94)
-                  continue
-              if not client:
-                  raise RuntimeError('HF_Token is required when a chapter image is missing')
-              base=prompts[i-1] if i-1 < len(prompts) else req.get('visual_style','cinematic Abbasid Baghdad historical documentary')
-              prompt=(base + ', horizontal 16:9 cinematic historical documentary frame, warm lamplight, historically plausible Abbasid Baghdad, atmospheric depth, refined painterly photorealism, no text, no letters, no numbers, no logos, no watermark')
-              image=client.text_to_image(prompt,model='black-forest-labs/FLUX.1-schnell',width=1024,height=576,num_inference_steps=4)
-              image.convert('RGB').save(out,quality=94)
-          PY
 
       - name: Build slow cinematic visuals synchronized to chapters
         shell: bash
@@ -160,7 +171,7 @@ jobs:
             -map 0:v:0 -map 1:a:0 -c:v copy -c:a copy -shortest -movflags +faststart "build/${EPISODE}_master.mp4"
           ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of json "build/${EPISODE}_master.mp4" | tee build/qc.json
           python3 - <<'PY'
-          import json, os, subprocess
+          import os, subprocess
           f=f"build/{os.environ['EPISODE']}_master.mp4"
           d=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',f],text=True))
           assert d>60, f'episode too short: {d}'
@@ -174,6 +185,7 @@ jobs:
           path: |
             build/${{ env.EPISODE }}_master.mp4
             build/qc.json
+            build/image_manifest.json
           retention-days: 14
           compression-level: 0
 
@@ -213,5 +225,5 @@ jobs:
         run: |
           URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج. سأحتاج مراجعة هذا التشغيل: ${URL}" >/dev/null || true
+            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج: ${URL}" >/dev/null || true
           fi
