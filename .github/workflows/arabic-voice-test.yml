@@ -18,19 +18,19 @@ jobs:
         run: |
           pip install edge-tts
           sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Generate Hamed Calm Baghdad V2 narration
+      - name: Generate Hamed Calm Baghdad V3 pronunciation sample
         run: |
           mkdir -p voice_samples
           cat > sample.txt <<'EOF'
-          تخيّل أنك فتحت عينيك ذات صباح في بغداد، قبل أكثر من ألف عام. لا سيارات في الشوارع، ولا أضواء كهربائية، لكن المدينة بدأت تستيقظ بالفعل. من نافذة بيتك ترى ضوء الفجر ينعكس على دجلة، وتسمع وقع أقدام التجار وهم يفتحون حوانيتهم. في السوق تمتزج رائحة الخبز الساخن بالتوابل والعطور القادمة من بلاد بعيدة. تمشي بين الورّاقين، فتجد كتباً تُنسخ باليد، وعلماء يناقشون الطب والفلك والحساب. وعلى ضفاف دجلة تعبر القوارب حاملة الناس والبضائع بين ضفتي المدينة. ومع غروب الشمس، تخف ضوضاء السوق، وتضيء المصابيح الزيتية الأزقة الضيقة. لم تكن بغداد مجرد مدينة كبيرة؛ كانت في ذلك الزمن واحداً من أهم مراكز العلم والتجارة في العالم. وهذه… مجرد بداية يوم واحد فيها.
+          تَخَيَّلْ أَنَّكَ فَتَحْتَ عَيْنَيْكَ ذَاتَ صَبَاحٍ فِي بَغْدَاد، قَبْلَ أَكْثَرَ مِنْ أَلْفِ عَام. مِنْ نَافِذَةِ بَيْتِكَ تَرَى ضَوْءَ الفَجْرِ يَنْعَكِسُ عَلَى نَهْرِ دِجْلَة، وَتَسْمَعُ خُطُوَاتِ التُّجَّارِ وَهُمْ يَفْتَحُونَ حَوَانِيتَهُمْ. تَمْشِي بَيْنَ الوَرَّاقِينَ، فَتَجِدُ كُتُبًا تُنْسَخُ بِاليَدِ، وَعُلَمَاءَ يُنَاقِشُونَ الطِّبَّ وَالفَلَكَ وَالحِسَاب. وَهُنَا، فِي بَغْدَادَ العَبَّاسِيَّة، تَبْدَأُ حِكَايَتُنَا.
           EOF
-          edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz --text "$(cat sample.txt)" --write-media voice_samples/baghdad_v2_hamed_calm.mp3
+          edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz --text "$(cat sample.txt)" --write-media voice_samples/baghdad_v3_hamed_calm_pronunciation.mp3
       - name: Validate narration
         run: |
-          test -s voice_samples/baghdad_v2_hamed_calm.mp3
-          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 voice_samples/baghdad_v2_hamed_calm.mp3
+          test -s voice_samples/baghdad_v3_hamed_calm_pronunciation.mp3
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 voice_samples/baghdad_v3_hamed_calm_pronunciation.mp3
       - uses: actions/upload-artifact@v4
         with:
-          name: baghdad-v2-hamed-calm
-          path: voice_samples/baghdad_v2_hamed_calm.mp3
+          name: baghdad-v3-hamed-calm-pronunciation
+          path: voice_samples/baghdad_v3_hamed_calm_pronunciation.mp3
           retention-days: 7
