@@ -1,0 +1,47 @@
+name: Saher History Audio Only
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/saher-history-audio-only.yml'
+      - 'episodes/baghdad-1000-years/chapters/**'
+
+jobs:
+  narration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Edge TTS and FFmpeg
+        run: |
+          python -m pip install --upgrade edge-tts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+      - name: Generate Hamed Calm narration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/audio
+          i=0
+          for f in $(find episodes/baghdad-1000-years/chapters -name '*.txt' -type f | sort); do
+            i=$((i+1))
+            edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz --file "$f" --write-media "build/audio/$(printf '%02d' $i).mp3"
+          done
+          : > build/audio/list.txt
+          for f in build/audio/[0-9][0-9].mp3; do printf "file '%s'\n" "$(realpath "$f")" >> build/audio/list.txt; done
+          ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/audio/list.txt -c:a libmp3lame -b:a 128k build/baghdad_episode01_narration.mp3
+          ffprobe -v error -show_entries format=duration,size -of json build/baghdad_episode01_narration.mp3 | tee build/audio_qc.json
+      - name: Upload narration artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: saher-baghdad-episode01-narration
+          path: |
+            build/baghdad_episode01_narration.mp3
+            build/audio_qc.json
+            build/audio/*.mp3
+          retention-days: 14
+          compression-level: 0
