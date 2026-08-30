@@ -7,6 +7,10 @@ on:
         description: Arabic text to synthesize
         required: false
         default: "تخيّل أنك تفتح عينيك مع أول ضوء للفجر. أنت في بغداد، قبل أكثر من ألف عام. تبدأ الأزقة بالاستيقاظ ببطء، وتصل إليك أصوات الباعة والقوارب على دجلة."
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/arabic-voice-test.yml'
 
 jobs:
   generate-voices:
@@ -24,14 +28,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+      - name: Resolve sample text
+        id: text
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.text }}" ]; then
+            cat > sample.txt <<'EOF'
+          ${{ github.event.inputs.text }}
+          EOF
+          else
+            cat > sample.txt <<'EOF'
+          تخيّل أنك تفتح عينيك مع أول ضوء للفجر. أنت في بغداد، قبل أكثر من ألف عام. تبدأ الأزقة بالاستيقاظ ببطء، وتصل إليك أصوات الباعة والقوارب على دجلة.
+          EOF
+          fi
+
       - name: Generate three Arabic voice samples
-        env:
-          SAMPLE_TEXT: ${{ github.event.inputs.text }}
         run: |
           mkdir -p voice_samples
-          edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz  --text "$SAMPLE_TEXT" --write-media voice_samples/01_hamed_calm.mp3
-          edge-tts --voice ar-SA-HamedNeural --rate=-18% --pitch=-18Hz --text "$SAMPLE_TEXT" --write-media voice_samples/02_hamed_deep.mp3
-          edge-tts --voice ar-SA-ZariyahNeural --rate=-14% --pitch=-4Hz --text "$SAMPLE_TEXT" --write-media voice_samples/03_zariyah_soft.mp3
+          TEXT="$(cat sample.txt)"
+          edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz  --text "$TEXT" --write-media voice_samples/01_hamed_calm.mp3
+          edge-tts --voice ar-SA-HamedNeural --rate=-18% --pitch=-18Hz --text "$TEXT" --write-media voice_samples/02_hamed_deep.mp3
+          edge-tts --voice ar-SA-ZariyahNeural --rate=-14% --pitch=-4Hz --text "$TEXT" --write-media voice_samples/03_zariyah_soft.mp3
 
       - name: Validate audio files
         run: |
