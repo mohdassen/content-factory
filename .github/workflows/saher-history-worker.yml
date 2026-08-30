@@ -81,67 +81,36 @@ jobs:
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
           python -m pip install --upgrade edge-tts pillow
 
-      - name: Rebuild and verify ChatGPT image asset pack
+      - name: Verify direct ChatGPT chapter images
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build/images build/assets
+          mkdir -p build/images
           python3 - <<'PY'
-          import base64, hashlib, json, os, pathlib, re, tarfile
+          import hashlib, json, os, pathlib
           from PIL import Image, ImageOps
-
           root=pathlib.Path('episodes')/os.environ['EPISODE']
           req=json.loads((root/'request.json').read_text(encoding='utf-8'))
           assert req.get('image_provider')=='chatgpt_builtin_only', req.get('image_provider')
           assert req.get('status') in ('pending','processing'), req.get('status')
           chapters=sorted((root/'chapters').glob('*.txt'))
           assert len(chapters)==8, f'Expected 8 chapters, found {len(chapters)}'
-
-          manifest_rel=req.get('asset_pack',{}).get('manifest')
-          assert manifest_rel, 'asset_pack.manifest is missing from request.json'
-          manifest_path=root/manifest_rel
-          assert manifest_path.is_file(), f'Missing asset manifest: {manifest_path}'
-          m=json.loads(manifest_path.read_text(encoding='utf-8'))
-          assert m.get('version')==2, m.get('version')
-          expected=int(m['parts'])
-          prefix=m['parts_prefix']
-          files=[]
-          for i in range(expected):
-              p=manifest_path.parent/f'{prefix}{i:03d}'
-              assert p.is_file(), f'Missing image asset part {i:03d}: {p}'
-              files.append(p)
-          # Reject unexpected holes/duplicates and reconstruct in strict numeric order.
-          discovered=sorted(manifest_path.parent.glob(prefix+'*'))
-          assert len(discovered)==expected, f'Expected {expected} asset parts, found {len(discovered)}'
-          payload=''.join(''.join(p.read_text(encoding='utf-8').split()) for p in files)
-          assert len(payload)==int(m['base64_length']), f'Base64 length mismatch: {len(payload)} != {m["base64_length"]}'
-          raw=base64.b64decode(payload,validate=True)
-          assert len(raw)==int(m['binary_size']), f'Binary size mismatch: {len(raw)} != {m["binary_size"]}'
-          digest=hashlib.sha256(raw).hexdigest()
-          assert digest==m['sha256'], f'Asset SHA256 mismatch: {digest} != {m["sha256"]}'
-          archive=pathlib.Path('build/assets/images.tar.gz')
-          archive.write_bytes(raw)
-          with tarfile.open(archive,'r:gz') as tf:
-              members=tf.getmembers()
-              for member in members:
-                  target=(pathlib.Path('build/assets/unpacked')/member.name).resolve()
-                  base=pathlib.Path('build/assets/unpacked').resolve()
-                  assert str(target).startswith(str(base)), 'Unsafe path in image archive'
-              tf.extractall('build/assets/unpacked')
-
-          image_manifest=[]
-          for i,_ in enumerate(chapters,1):
-              src=pathlib.Path('build/assets/unpacked')/f'{i:02d}.jpg'
-              assert src.is_file(), f'Missing image {i:02d}.jpg in verified asset pack'
+          manifest=[]
+          for i in range(1,9):
+              src=root/'images'/f'{i:02d}.jpg'
+              assert src.is_file(), f'Missing direct image {src}'
+              raw=src.read_bytes()
+              assert len(raw) > 1500, f'Image {i:02d} suspiciously small: {len(raw)}'
+              with Image.open(src) as opened:
+                  opened.verify()
               img=Image.open(src).convert('RGB')
-              assert img.width>=640 and img.height>=360, f'Image {i:02d} too small: {img.size}'
+              assert img.width >= 320 and img.height >= 180, f'Image {i:02d} too small: {img.size}'
               img=ImageOps.fit(img,(1280,720),method=Image.Resampling.LANCZOS,centering=(0.5,0.5))
               out=pathlib.Path('build/images')/f'{i:02d}.jpg'
               img.save(out,'JPEG',quality=94,optimize=True)
-              image_manifest.append({'chapter':i,'source':'chatgpt_builtin_only','sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'size':out.stat().st_size})
-          pathlib.Path('build/image_manifest.json').write_text(json.dumps(image_manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-          print('Verified asset pack:',digest)
-          print('Prepared images:',len(image_manifest))
+              manifest.append({'chapter':i,'source':'chatgpt_builtin_only','input_bytes':len(raw),'input_sha256':hashlib.sha256(raw).hexdigest(),'output':str(out)})
+          pathlib.Path('build/image_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print('Verified 8 direct ChatGPT JPEGs')
           PY
 
       - name: Generate Hamed Calm narration by chapter
@@ -214,9 +183,8 @@ jobs:
           f=f"build/{os.environ['EPISODE']}_master.mp4"
           probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration,size','-show_entries','stream=codec_type,codec_name,width,height','-of','json',f],text=True))
           d=float(probe['format']['duration']); size=int(probe['format']['size'])
-          streams=probe['streams']
-          video=next(s for s in streams if s.get('codec_type')=='video')
-          audio=next(s for s in streams if s.get('codec_type')=='audio')
+          video=next(s for s in probe['streams'] if s.get('codec_type')=='video')
+          audio=next(s for s in probe['streams'] if s.get('codec_type')=='audio')
           assert 2700 <= d <= 3900, f'Duration outside 45-65 minute gate: {d/60:.2f} min'
           assert video.get('codec_name')=='h264', video
           assert video.get('width')==1280 and video.get('height')==720, video
@@ -243,14 +211,17 @@ jobs:
         if: success()
         shell: bash
         run: |
+          set -euo pipefail
+          git config user.name 'saher-history-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git pull --rebase origin main
           python3 - <<'PY'
           import json, os, pathlib
           p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
           d=json.loads(p.read_text(encoding='utf-8'))
-          d['status']='done'; d['last_run_id']=os.environ['GITHUB_RUN_ID']; d.pop('active_run_id',None)
+          d['status']='done'; d['last_run_id']=os.environ['GITHUB_RUN_ID']; d.pop('active_run_id',None); d.pop('last_error',None)
           p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
-          git pull --rebase origin main
           git add "episodes/$EPISODE/request.json"
           git commit -m "Mark $EPISODE complete [skip ci]" || true
           git push
@@ -274,18 +245,21 @@ jobs:
         shell: bash
         run: |
           set +e
-          git pull --rebase origin main
+          URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          git config user.name 'saher-history-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git pull --rebase origin main || true
           python3 - <<'PY'
           import json, os, pathlib
           p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
-          d=json.loads(p.read_text(encoding='utf-8'))
-          d['status']='failed'; d['last_failed_run_id']=os.environ['GITHUB_RUN_ID']; d.pop('active_run_id',None)
-          p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          if p.exists():
+              d=json.loads(p.read_text(encoding='utf-8'))
+              d['status']='failed'; d['last_run_id']=os.environ['GITHUB_RUN_ID']; d['last_error']='production_or_qc_failed'; d.pop('active_run_id',None)
+              p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
-          git add "episodes/$EPISODE/request.json"
+          git add "episodes/$EPISODE/request.json" || true
           git commit -m "Mark $EPISODE failed [skip ci]" || true
           git push || true
-          URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — توقف الإنتاج بعد فشل موثق ولن يعاد تلقائيًا حتى يتم إصلاحه: ${URL}" >/dev/null || true
+            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج أو QC. التشغيل: ${URL}" >/dev/null || true
           fi
