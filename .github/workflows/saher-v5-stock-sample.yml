@@ -1,0 +1,31 @@
+name: Saher V5 Real Stock Sample
+on:
+  push:
+    paths:
+      - 'saher-history/v5-stock-trigger.txt'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - name: Download real stock clips
+        run: |
+          mkdir -p work
+          curl -L --fail --retry 3 -o work/clip1.mp4 'https://cdn.pixabay.com/video/2015/08/08/125-135736646_medium.mp4'
+          curl -L --fail --retry 3 -o work/clip2.mp4 'https://player.vimeo.com/external/269971860.hd.mp4?s=eae965838585cc8342bb5d5253d06a52b2415570&profile_id=174&oauth2_token_id=57447761'
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 work/clip1.mp4
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 work/clip2.mp4
+      - name: Build 45 second stock-first sample
+        run: |
+          ffmpeg -y -stream_loop 3 -i work/clip1.mp4 -stream_loop 5 -i work/clip2.mp4 -filter_complex "[0:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=24,setpts=PTS-STARTPTS,eq=brightness=-0.03:contrast=1.05:saturation=0.82,vignette=PI/5[v0];[1:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=22,setpts=PTS-STARTPTS,eq=brightness=-0.04:contrast=1.06:saturation=0.78,vignette=PI/5[v1];[v0][v1]xfade=transition=fade:duration=1:offset=23[v]" -map '[v]' -t 44 -an -c:v libx264 -preset medium -crf 21 -pix_fmt yuv420p -movflags +faststart work/saher_v5_real_stock_sample.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saher-v5-real-stock-sample
+          path: work/saher_v5_real_stock_sample.mp4
+          retention-days: 7
