@@ -1,6 +1,6 @@
 {
   "request_id": "baghdad-ep01-v1",
-  "status": "processing",
+  "status": "failed",
   "title": "كيف كان يومك لو استيقظت في بغداد قبل 1000 سنة؟ | قصة تاريخية هادئة للنوم",
   "target_minutes": 50,
   "voice": "ar-SA-HamedNeural",
@@ -28,5 +28,6 @@
     "Cambridge histories of the Abbasid Caliphate and Baghdad",
     "academic studies of Abbasid trade, river transport, markets and book culture"
   ],
-  "active_run_id": "33338989737"
+  "last_run_id": "33338989737",
+  "last_error": "production_or_qc_failed"
 }
