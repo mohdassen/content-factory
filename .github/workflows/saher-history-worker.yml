@@ -6,7 +6,6 @@ on:
     paths:
       - 'episodes/**/request.json'
       - 'episodes/**/chapters/**'
-      - 'episodes/**/images/**'
       - '.github/workflows/saher-history-worker.yml'
   schedule:
     - cron: '*/15 * * * *'
@@ -51,9 +50,30 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Lock episode as processing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
+          d=json.loads(p.read_text(encoding='utf-8'))
+          assert d.get('status')=='pending', d.get('status')
+          d['status']='processing'
+          d['active_run_id']=os.environ['GITHUB_RUN_ID']
+          p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          git config user.name 'saher-history-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add "episodes/$EPISODE/request.json"
+          git commit -m "Lock $EPISODE for run ${GITHUB_RUN_ID} [skip ci]"
+          git push
 
       - name: Install production stack
         run: |
@@ -61,66 +81,67 @@ jobs:
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
           python -m pip install --upgrade edge-tts pillow
 
-      - name: Prepare ChatGPT built-in chapter images
+      - name: Rebuild and verify ChatGPT image asset pack
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build/images
+          mkdir -p build/images build/assets
           python3 - <<'PY'
-          import base64, json, os, pathlib
+          import base64, hashlib, json, os, pathlib, re, tarfile
           from PIL import Image, ImageOps
 
           root=pathlib.Path('episodes')/os.environ['EPISODE']
           req=json.loads((root/'request.json').read_text(encoding='utf-8'))
-          assert req.get('status')=='pending', req.get('status')
           assert req.get('image_provider')=='chatgpt_builtin_only', req.get('image_provider')
+          assert req.get('status') in ('pending','processing'), req.get('status')
           chapters=sorted((root/'chapters').glob('*.txt'))
           assert len(chapters)==8, f'Expected 8 chapters, found {len(chapters)}'
 
-          # Prefer standalone curated images. If absent, rebuild the ChatGPT-generated
-          # storyboard committed as text-safe Base64 parts and crop text-free scene areas.
-          story=None
-          parts=sorted((root/'images').glob('story512.b64.part*'))
-          if parts:
-              payload=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
-              raw=base64.b64decode(payload, validate=True)
-              temp=pathlib.Path('build/storyboard.jpg')
-              temp.write_bytes(raw)
-              story=Image.open(temp).convert('RGB')
-              print('Rebuilt ChatGPT storyboard:', story.size, 'from', len(parts), 'parts')
+          manifest_rel=req.get('asset_pack',{}).get('manifest')
+          assert manifest_rel, 'asset_pack.manifest is missing from request.json'
+          manifest_path=root/manifest_rel
+          assert manifest_path.is_file(), f'Missing asset manifest: {manifest_path}'
+          m=json.loads(manifest_path.read_text(encoding='utf-8'))
+          assert m.get('version')==2, m.get('version')
+          expected=int(m['parts'])
+          prefix=m['parts_prefix']
+          files=[]
+          for i in range(expected):
+              p=manifest_path.parent/f'{prefix}{i:03d}'
+              assert p.is_file(), f'Missing image asset part {i:03d}: {p}'
+              files.append(p)
+          # Reject unexpected holes/duplicates and reconstruct in strict numeric order.
+          discovered=sorted(manifest_path.parent.glob(prefix+'*'))
+          assert len(discovered)==expected, f'Expected {expected} asset parts, found {len(discovered)}'
+          payload=''.join(''.join(p.read_text(encoding='utf-8').split()) for p in files)
+          assert len(payload)==int(m['base64_length']), f'Base64 length mismatch: {len(payload)} != {m["base64_length"]}'
+          raw=base64.b64decode(payload,validate=True)
+          assert len(raw)==int(m['binary_size']), f'Binary size mismatch: {len(raw)} != {m["binary_size"]}'
+          digest=hashlib.sha256(raw).hexdigest()
+          assert digest==m['sha256'], f'Asset SHA256 mismatch: {digest} != {m["sha256"]}'
+          archive=pathlib.Path('build/assets/images.tar.gz')
+          archive.write_bytes(raw)
+          with tarfile.open(archive,'r:gz') as tf:
+              members=tf.getmembers()
+              for member in members:
+                  target=(pathlib.Path('build/assets/unpacked')/member.name).resolve()
+                  base=pathlib.Path('build/assets/unpacked').resolve()
+                  assert str(target).startswith(str(base)), 'Unsafe path in image archive'
+              tf.extractall('build/assets/unpacked')
 
-          # Coordinates are normalized from the original 1024x1536 ChatGPT storyboard.
-          boxes=[
-              (250/1024,   0/1536, 939/1024, 388/1536),
-              (145/1024, 480/1536, 500/1024, 680/1536),
-              (502/1024, 478/1536, 862/1024, 681/1536),
-              (145/1024, 749/1536, 500/1024, 949/1536),
-              (502/1024, 746/1536, 862/1024, 949/1536),
-              (145/1024,1002/1536, 500/1024,1202/1536),
-              (502/1024,1001/1536, 860/1024,1202/1536),
-              (230/1024,1202/1536, 824/1024,1536/1536),
-          ]
-          manifest=[]
+          image_manifest=[]
           for i,_ in enumerate(chapters,1):
-              src=None
-              for ext in ('.jpg','.jpeg','.png','.webp'):
-                  p=root/'images'/f'{i:02d}{ext}'
-                  if p.exists(): src=p; break
-              if src:
-                  img=Image.open(src).convert('RGB')
-                  source=str(src)
-              else:
-                  assert story is not None, f'No ChatGPT image source for chapter {i}'
-                  w,h=story.size
-                  l,t,r,b=boxes[i-1]
-                  img=story.crop((round(l*w),round(t*h),round(r*w),round(b*h)))
-                  source='chatgpt_storyboard_crop'
+              src=pathlib.Path('build/assets/unpacked')/f'{i:02d}.jpg'
+              assert src.is_file(), f'Missing image {i:02d}.jpg in verified asset pack'
+              img=Image.open(src).convert('RGB')
+              assert img.width>=640 and img.height>=360, f'Image {i:02d} too small: {img.size}'
               img=ImageOps.fit(img,(1280,720),method=Image.Resampling.LANCZOS,centering=(0.5,0.5))
               out=pathlib.Path('build/images')/f'{i:02d}.jpg'
-              img.save(out,'JPEG',quality=92,optimize=True)
-              manifest.append({'chapter':i,'source':'chatgpt_builtin_only','input':source,'output':str(out)})
-          pathlib.Path('build/image_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-          print('Prepared',len(manifest),'ChatGPT chapter frames')
+              img.save(out,'JPEG',quality=94,optimize=True)
+              image_manifest.append({'chapter':i,'source':'chatgpt_builtin_only','sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'size':out.stat().st_size})
+          pathlib.Path('build/image_manifest.json').write_text(json.dumps(image_manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print('Verified asset pack:',digest)
+          print('Prepared images:',len(image_manifest))
           PY
 
       - name: Generate Hamed Calm narration by chapter
@@ -129,38 +150,42 @@ jobs:
           set -euo pipefail
           mkdir -p build/audio
           i=0
-          for f in $(find "episodes/$EPISODE/chapters" -name '*.txt' -type f | sort); do
+          while IFS= read -r -d '' f; do
             i=$((i+1))
             edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz --file "$f" --write-media "build/audio/$(printf '%02d' $i).mp3"
-          done
+          done < <(find "episodes/$EPISODE/chapters" -name '*.txt' -type f -print0 | sort -z)
+          test "$i" -eq 8
           : > build/audio/list.txt
           for f in build/audio/[0-9][0-9].mp3; do printf "file '%s'\n" "$(realpath "$f")" >> build/audio/list.txt; done
           ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/audio/list.txt -c:a libmp3lame -b:a 128k build/narration.mp3
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 build/narration.mp3 | tee build/narration_duration.txt
 
-      - name: Build slow cinematic visuals synchronized to chapters
+      - name: Build slow cinematic visuals synchronized to narration
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build/video
           : > build/video/list.txt
           n=0
+          total=8
           for a in build/audio/[0-9][0-9].mp3; do
             n=$((n+1)); id=$(printf '%02d' $n); img="build/images/$id.jpg"
             dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$a")
+            if [ "$n" -eq "$total" ]; then dur=$(python3 -c "print(float('$dur')+8.0)"); fi
             frames=$(python3 -c "import math; print(math.ceil(float('$dur')*30))")
             ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$img" -t "$dur" \
-              -vf "scale=1450:-2,crop=1280:720,zoompan=z='min(zoom+0.00004,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=$frames:s=1280x720:fps=30,fade=t=in:st=0:d=2" \
-              -an -c:v libx264 -preset veryfast -crf 25 -pix_fmt yuv420p "build/video/$id.mp4"
+              -vf "scale=1450:-2,crop=1280:720,zoompan=z='min(zoom+0.00004,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=$frames:s=1280x720:fps=30" \
+              -an -c:v libx264 -preset veryfast -crf 24 -pix_fmt yuv420p "build/video/$id.mp4"
             printf "file '%s'\n" "$(realpath "build/video/$id.mp4")" >> build/video/list.txt
           done
           ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/video/list.txt -c copy build/visual.mp4
 
-      - name: Add approved V3 sleep ambience and master audio
+      - name: Add approved V3 ambience and 8-second quiet tail
         shell: bash
         run: |
           set -euo pipefail
-          DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 build/narration.mp3)
+          NARR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 build/narration.mp3)
+          DUR=$(python3 -c "print(float('$NARR')+8.0)")
           OUTSTART=$(python3 -c "print(max(0,float('$DUR')-8))")
           ffmpeg -hide_banner -loglevel error -y \
             -f lavfi -i "sine=frequency=110:sample_rate=44100:duration=$DUR" \
@@ -169,7 +194,7 @@ jobs:
             -filter_complex "[0:a]volume=0.020[a0];[1:a]volume=0.013[a1];[2:a]volume=0.010[a2];[a0][a1][a2]amix=3,afade=t=in:st=0:d=6,afade=t=out:st=$OUTSTART:d=8[amb]" \
             -map '[amb]' build/ambient.wav
           ffmpeg -hide_banner -loglevel error -y -i build/narration.mp3 -i build/ambient.wav \
-            -filter_complex "[0:a]volume=1[voice];[1:a]volume=2.1,highpass=f=65,lowpass=f=5000[bg];[bg][voice]sidechaincompress=threshold=0.06:ratio=1.7:attack=40:release=800[duck];[voice][duck]amix=inputs=2:duration=first:weights='1 0.95':normalize=0,alimiter=limit=0.96[out]" \
+            -filter_complex "[0:a]apad=pad_dur=8,volume=1[voice];[1:a]volume=2.1,highpass=f=65,lowpass=f=5000[bg];[bg][voice]sidechaincompress=threshold=0.06:ratio=1.7:attack=40:release=800[duck];[voice][duck]amix=inputs=2:duration=longest:weights='1 0.95':normalize=0,atrim=duration=$DUR,alimiter=limit=0.96[out]" \
             -map '[out]' -c:a aac -b:a 160k build/final_audio.m4a
 
       - name: Render final episode master
@@ -185,12 +210,19 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import os, subprocess
+          import json, os, subprocess
           f=f"build/{os.environ['EPISODE']}_master.mp4"
-          d=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',f],text=True))
-          print('QC duration seconds:',d)
-          assert d >= 2700, f'episode shorter than 45 minutes: {d/60:.1f} min'
-          assert d <= 3900, f'episode longer than 65 minutes: {d/60:.1f} min'
+          probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration,size','-show_entries','stream=codec_type,codec_name,width,height','-of','json',f],text=True))
+          d=float(probe['format']['duration']); size=int(probe['format']['size'])
+          streams=probe['streams']
+          video=next(s for s in streams if s.get('codec_type')=='video')
+          audio=next(s for s in streams if s.get('codec_type')=='audio')
+          assert 2700 <= d <= 3900, f'Duration outside 45-65 minute gate: {d/60:.2f} min'
+          assert video.get('codec_name')=='h264', video
+          assert video.get('width')==1280 and video.get('height')==720, video
+          assert audio.get('codec_name')=='aac', audio
+          assert size > 5_000_000, f'Final file suspiciously small: {size}'
+          print(f'QC PASS duration={d/60:.2f}m size={size/1e6:.1f}MB video=H264 1280x720 audio=AAC')
           PY
 
       - name: Upload production artifact
@@ -207,6 +239,22 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+      - name: Mark request complete
+        if: success()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
+          d=json.loads(p.read_text(encoding='utf-8'))
+          d['status']='done'; d['last_run_id']=os.environ['GITHUB_RUN_ID']; d.pop('active_run_id',None)
+          p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          git pull --rebase origin main
+          git add "episodes/$EPISODE/request.json"
+          git commit -m "Mark $EPISODE complete [skip ci]" || true
+          git push
+
       - name: Notify Telegram success
         if: success()
         shell: bash
@@ -217,33 +265,27 @@ jobs:
             if [ "$SIZE" -lt 48000000 ]; then
               curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@build/${EPISODE}_master.mp4" -F "supports_streaming=true" -F "caption=✅ ساهر مع التاريخ — الحلقة جاهزة\n${URL}" >/dev/null
             else
-              curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=✅ ساهر مع التاريخ — الحلقة جاهزة. ملف الفيديو محفوظ كـ GitHub Artifact: ${URL}" >/dev/null
+              curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=✅ ساهر مع التاريخ — الحلقة جاهزة كـ GitHub Artifact: ${URL}" >/dev/null
             fi
           fi
 
-      - name: Mark request complete
-        if: success()
+      - name: Mark failed request and notify Telegram
+        if: failure()
         shell: bash
         run: |
+          set +e
+          git pull --rebase origin main
           python3 - <<'PY'
           import json, os, pathlib
           p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
           d=json.loads(p.read_text(encoding='utf-8'))
-          d['status']='done'
-          d['last_run_id']=os.environ['GITHUB_RUN_ID']
+          d['status']='failed'; d['last_failed_run_id']=os.environ['GITHUB_RUN_ID']; d.pop('active_run_id',None)
           p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
-          git config user.name 'saher-history-bot'
-          git config user.email 'actions@users.noreply.github.com'
           git add "episodes/$EPISODE/request.json"
-          git commit -m "Mark $EPISODE request complete [skip ci]" || true
-          git push
-
-      - name: Notify Telegram failure
-        if: failure()
-        shell: bash
-        run: |
+          git commit -m "Mark $EPISODE failed [skip ci]" || true
+          git push || true
           URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج أو QC. التشغيل: ${URL}" >/dev/null || true
+            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — توقف الإنتاج بعد فشل موثق ولن يعاد تلقائيًا حتى يتم إصلاحه: ${URL}" >/dev/null || true
           fi
