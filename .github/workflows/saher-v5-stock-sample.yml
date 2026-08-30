@@ -34,13 +34,13 @@ jobs:
             -stream_loop 1 -i work/clip2.webm \
             -stream_loop 1 -i work/clip3.webm \
             -filter_complex "\
-            [0:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=24,setpts=PTS-STARTPTS,eq=brightness=-0.025:contrast=1.05:saturation=0.86,vignette=PI/5[v0];\
-            [1:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=18,setpts=PTS-STARTPTS,eq=brightness=-0.045:contrast=1.07:saturation=0.72,vignette=PI/5[v1];\
-            [2:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=20,setpts=PTS-STARTPTS,eq=brightness=-0.05:contrast=1.06:saturation=0.76,vignette=PI/5[v2];\
+            [0:v]fps=25,settb=AVTB,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=24,setpts=PTS-STARTPTS,eq=brightness=-0.025:contrast=1.05:saturation=0.86,vignette=PI/5,format=yuv420p[v0];\
+            [1:v]fps=25,settb=AVTB,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=18,setpts=PTS-STARTPTS,eq=brightness=-0.045:contrast=1.07:saturation=0.72,vignette=PI/5,format=yuv420p[v1];\
+            [2:v]fps=25,settb=AVTB,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,trim=duration=20,setpts=PTS-STARTPTS,eq=brightness=-0.05:contrast=1.06:saturation=0.76,vignette=PI/5,format=yuv420p[v2];\
             [v0][v1]xfade=transition=fade:duration=1:offset=23[x1];\
             [x1][v2]xfade=transition=fade:duration=1:offset=40[v]" \
-            -map '[v]' -t 59 -an -c:v libx264 -preset medium -crf 21 -pix_fmt yuv420p -movflags +faststart work/saher_v5_real_stock_sample.mp4
-          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of default=nw=1 work/saher_v5_real_stock_sample.mp4
+            -map '[v]' -t 59 -an -r 25 -c:v libx264 -preset medium -crf 21 -pix_fmt yuv420p -movflags +faststart work/saher_v5_real_stock_sample.mp4
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of default=nw=1 work/saher_v5_real_stock_sample.mp4
       - name: Write attribution
         run: |
           cat > work/ATTRIBUTION.txt <<'TXT'
