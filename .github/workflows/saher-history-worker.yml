@@ -1,8 +1,6 @@
 name: Saher History Background Worker
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
   push:
     paths:
@@ -10,6 +8,8 @@ on:
       - 'episodes/**/chapters/**'
       - 'episodes/**/images/**'
       - '.github/workflows/saher-history-worker.yml'
+  schedule:
+    - cron: '*/15 * * * *'
 
 permissions:
   contents: write
@@ -61,59 +61,66 @@ jobs:
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
           python -m pip install --upgrade edge-tts pillow
 
-      - name: Validate episode package and local ChatGPT images
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s "episodes/$EPISODE/request.json"
-          python3 - <<'PY'
-          import json, os, pathlib
-          root=pathlib.Path('episodes')/os.environ['EPISODE']
-          d=json.loads((root/'request.json').read_text(encoding='utf-8'))
-          assert d['status']=='pending', d.get('status')
-          assert d.get('image_provider')=='chatgpt_builtin_only', d.get('image_provider')
-          chapters=sorted((root/'chapters').glob('*.txt'))
-          assert chapters, 'No chapters found'
-          missing=[]
-          for i,_ in enumerate(chapters,1):
-              if not any((root/'images'/f'{i:02d}{ext}').exists() for ext in ('.jpg','.jpeg','.png','.webp')):
-                  missing.append(i)
-          assert not missing, f'Missing ChatGPT-generated chapter images: {missing}'
-          print('Episode:', d.get('title'))
-          print('Target minutes:', d.get('target_minutes'))
-          print('Local images ready:', len(chapters))
-          PY
-
-      - name: Prepare local chapter images
+      - name: Prepare ChatGPT built-in chapter images
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build/images
           python3 - <<'PY'
-          import json, os, pathlib
-          from PIL import Image
+          import base64, json, os, pathlib
+          from PIL import Image, ImageOps
+
           root=pathlib.Path('episodes')/os.environ['EPISODE']
+          req=json.loads((root/'request.json').read_text(encoding='utf-8'))
+          assert req.get('status')=='pending', req.get('status')
+          assert req.get('image_provider')=='chatgpt_builtin_only', req.get('image_provider')
           chapters=sorted((root/'chapters').glob('*.txt'))
+          assert len(chapters)==8, f'Expected 8 chapters, found {len(chapters)}'
+
+          # Prefer standalone curated images. If absent, rebuild the ChatGPT-generated
+          # storyboard committed as text-safe Base64 parts and crop text-free scene areas.
+          story=None
+          parts=sorted((root/'images').glob('story512.b64.part*'))
+          if parts:
+              payload=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+              raw=base64.b64decode(payload, validate=True)
+              temp=pathlib.Path('build/storyboard.jpg')
+              temp.write_bytes(raw)
+              story=Image.open(temp).convert('RGB')
+              print('Rebuilt ChatGPT storyboard:', story.size, 'from', len(parts), 'parts')
+
+          # Coordinates are normalized from the original 1024x1536 ChatGPT storyboard.
+          boxes=[
+              (250/1024,   0/1536, 939/1024, 388/1536),
+              (145/1024, 480/1536, 500/1024, 680/1536),
+              (502/1024, 478/1536, 862/1024, 681/1536),
+              (145/1024, 749/1536, 500/1024, 949/1536),
+              (502/1024, 746/1536, 862/1024, 949/1536),
+              (145/1024,1002/1536, 500/1024,1202/1536),
+              (502/1024,1001/1536, 860/1024,1202/1536),
+              (230/1024,1202/1536, 824/1024,1536/1536),
+          ]
           manifest=[]
           for i,_ in enumerate(chapters,1):
               src=None
               for ext in ('.jpg','.jpeg','.png','.webp'):
                   p=root/'images'/f'{i:02d}{ext}'
                   if p.exists(): src=p; break
-              assert src is not None
-              img=Image.open(src).convert('RGB')
-              w,h=img.size
-              target=16/9
-              if w/h > target:
-                  nw=int(h*target); left=(w-nw)//2; img=img.crop((left,0,left+nw,h))
+              if src:
+                  img=Image.open(src).convert('RGB')
+                  source=str(src)
               else:
-                  nh=int(w/target); top=(h-nh)//2; img=img.crop((0,top,w,top+nh))
-              img=img.resize((1280,720),Image.Resampling.LANCZOS)
+                  assert story is not None, f'No ChatGPT image source for chapter {i}'
+                  w,h=story.size
+                  l,t,r,b=boxes[i-1]
+                  img=story.crop((round(l*w),round(t*h),round(r*w),round(b*h)))
+                  source='chatgpt_storyboard_crop'
+              img=ImageOps.fit(img,(1280,720),method=Image.Resampling.LANCZOS,centering=(0.5,0.5))
               out=pathlib.Path('build/images')/f'{i:02d}.jpg'
-              img.save(out,'JPEG',quality=95,optimize=True)
-              manifest.append({'chapter':i,'source':'chatgpt_builtin_only','input':str(src),'output':str(out)})
+              img.save(out,'JPEG',quality=92,optimize=True)
+              manifest.append({'chapter':i,'source':'chatgpt_builtin_only','input':source,'output':str(out)})
           pathlib.Path('build/image_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-          print('Prepared',len(manifest),'ChatGPT images')
+          print('Prepared',len(manifest),'ChatGPT chapter frames')
           PY
 
       - name: Generate Hamed Calm narration by chapter
@@ -129,6 +136,7 @@ jobs:
           : > build/audio/list.txt
           for f in build/audio/[0-9][0-9].mp3; do printf "file '%s'\n" "$(realpath "$f")" >> build/audio/list.txt; done
           ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/audio/list.txt -c:a libmp3lame -b:a 128k build/narration.mp3
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 build/narration.mp3 | tee build/narration_duration.txt
 
       - name: Build slow cinematic visuals synchronized to chapters
         shell: bash
@@ -142,7 +150,7 @@ jobs:
             dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$a")
             frames=$(python3 -c "import math; print(math.ceil(float('$dur')*30))")
             ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$img" -t "$dur" \
-              -vf "scale=1600:-2,crop=1280:720,zoompan=z='min(zoom+0.00008,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=$frames:s=1280x720:fps=30,fade=t=in:st=0:d=1.5" \
+              -vf "scale=1450:-2,crop=1280:720,zoompan=z='min(zoom+0.00004,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=$frames:s=1280x720:fps=30,fade=t=in:st=0:d=2" \
               -an -c:v libx264 -preset veryfast -crf 25 -pix_fmt yuv420p "build/video/$id.mp4"
             printf "file '%s'\n" "$(realpath "build/video/$id.mp4")" >> build/video/list.txt
           done
@@ -158,7 +166,8 @@ jobs:
             -f lavfi -i "sine=frequency=110:sample_rate=44100:duration=$DUR" \
             -f lavfi -i "sine=frequency=146.83:sample_rate=44100:duration=$DUR" \
             -f lavfi -i "sine=frequency=164.81:sample_rate=44100:duration=$DUR" \
-            -filter_complex "[0:a]volume=0.020[a0];[1:a]volume=0.013[a1];[2:a]volume=0.010[a2];[a0][a1][a2]amix=3,afade=t=in:st=0:d=6,afade=t=out:st=$OUTSTART:d=8[amb]" -map '[amb]' build/ambient.wav
+            -filter_complex "[0:a]volume=0.020[a0];[1:a]volume=0.013[a1];[2:a]volume=0.010[a2];[a0][a1][a2]amix=3,afade=t=in:st=0:d=6,afade=t=out:st=$OUTSTART:d=8[amb]" \
+            -map '[amb]' build/ambient.wav
           ffmpeg -hide_banner -loglevel error -y -i build/narration.mp3 -i build/ambient.wav \
             -filter_complex "[0:a]volume=1[voice];[1:a]volume=2.1,highpass=f=65,lowpass=f=5000[bg];[bg][voice]sidechaincompress=threshold=0.06:ratio=1.7:attack=40:release=800[duck];[voice][duck]amix=inputs=2:duration=first:weights='1 0.95':normalize=0,alimiter=limit=0.96[out]" \
             -map '[out]' -c:a aac -b:a 160k build/final_audio.m4a
@@ -170,15 +179,22 @@ jobs:
           ffmpeg -hide_banner -loglevel error -y -i build/visual.mp4 -i build/final_audio.m4a \
             -map 0:v:0 -map 1:a:0 -c:v copy -c:a copy -shortest -movflags +faststart "build/${EPISODE}_master.mp4"
           ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of json "build/${EPISODE}_master.mp4" | tee build/qc.json
+
+      - name: Episode quality gate
+        shell: bash
+        run: |
+          set -euo pipefail
           python3 - <<'PY'
           import os, subprocess
           f=f"build/{os.environ['EPISODE']}_master.mp4"
           d=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',f],text=True))
-          assert d>60, f'episode too short: {d}'
           print('QC duration seconds:',d)
+          assert d >= 2700, f'episode shorter than 45 minutes: {d/60:.1f} min'
+          assert d <= 3900, f'episode longer than 65 minutes: {d/60:.1f} min'
           PY
 
-      - name: Upload master artifact
+      - name: Upload production artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: saher-${{ env.EPISODE }}-${{ env.REQUEST_ID }}
@@ -186,6 +202,8 @@ jobs:
             build/${{ env.EPISODE }}_master.mp4
             build/qc.json
             build/image_manifest.json
+            build/narration_duration.txt
+          if-no-files-found: warn
           retention-days: 14
           compression-level: 0
 
@@ -199,7 +217,7 @@ jobs:
             if [ "$SIZE" -lt 48000000 ]; then
               curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@build/${EPISODE}_master.mp4" -F "supports_streaming=true" -F "caption=✅ ساهر مع التاريخ — الحلقة جاهزة\n${URL}" >/dev/null
             else
-              curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=✅ ساهر مع التاريخ — الحلقة جاهزة كـ GitHub Artifact: ${URL}" >/dev/null
+              curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=✅ ساهر مع التاريخ — الحلقة جاهزة. ملف الفيديو محفوظ كـ GitHub Artifact: ${URL}" >/dev/null
             fi
           fi
 
@@ -210,7 +228,9 @@ jobs:
           python3 - <<'PY'
           import json, os, pathlib
           p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
-          d=json.loads(p.read_text(encoding='utf-8')); d['status']='done'; d['last_run_id']=os.environ['GITHUB_RUN_ID']
+          d=json.loads(p.read_text(encoding='utf-8'))
+          d['status']='done'
+          d['last_run_id']=os.environ['GITHUB_RUN_ID']
           p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
           git config user.name 'saher-history-bot'
@@ -225,5 +245,5 @@ jobs:
         run: |
           URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج: ${URL}" >/dev/null || true
+            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج أو QC. التشغيل: ${URL}" >/dev/null || true
           fi
