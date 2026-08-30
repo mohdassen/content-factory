@@ -1,0 +1,217 @@
+name: Saher History Background Worker
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'episodes/**/request.json'
+      - 'episodes/**/chapters/**'
+      - '.github/workflows/saher-history-worker.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: saher-history-worker
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      episode: ${{ steps.pick.outputs.episode }}
+      request_id: ${{ steps.pick.outputs.request_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, pathlib
+          for p in sorted(pathlib.Path('episodes').glob('*/request.json')):
+              d=json.loads(p.read_text(encoding='utf-8'))
+              if d.get('status')=='pending':
+                  print('episode='+p.parent.name)
+                  print('request_id='+str(d.get('request_id','unknown')))
+                  break
+          PY
+
+  render:
+    needs: discover
+    if: needs.discover.outputs.episode != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      EPISODE: ${{ needs.discover.outputs.episode }}
+      REQUEST_ID: ${{ needs.discover.outputs.request_id }}
+      HF_TOKEN: ${{ secrets.HF_Token }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install production stack
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core
+          python -m pip install --upgrade edge-tts huggingface_hub pillow
+
+      - name: Validate episode package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "episodes/$EPISODE/request.json"
+          test "$(find episodes/$EPISODE/chapters -name '*.txt' -type f | wc -l)" -ge 1
+          python3 - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
+          d=json.loads(p.read_text(encoding='utf-8'))
+          assert d['status']=='pending'
+          print('Episode:', d.get('title'))
+          print('Target minutes:', d.get('target_minutes'))
+          PY
+
+      - name: Generate Hamed Calm narration by chapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/audio
+          i=0
+          for f in $(find "episodes/$EPISODE/chapters" -name '*.txt' -type f | sort); do
+            i=$((i+1))
+            edge-tts --voice ar-SA-HamedNeural --rate=-12% --pitch=-8Hz --file "$f" --write-media "build/audio/$(printf '%02d' $i).mp3"
+          done
+          printf '' > build/audio/list.txt
+          for f in build/audio/[0-9][0-9].mp3; do printf "file '%s'\n" "$(realpath "$f")" >> build/audio/list.txt; done
+          ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/audio/list.txt -c:a libmp3lame -b:a 128k build/narration.mp3
+
+      - name: Generate cinematic chapter images with FLUX when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/images
+          python3 - <<'PY'
+          import json, os, pathlib
+          from huggingface_hub import InferenceClient
+          from PIL import Image
+          root=pathlib.Path('episodes')/os.environ['EPISODE']
+          req=json.loads((root/'request.json').read_text(encoding='utf-8'))
+          chapters=sorted((root/'chapters').glob('*.txt'))
+          prompts=req.get('visual_prompts',[])
+          token=os.environ.get('HF_TOKEN','')
+          client=InferenceClient(provider='auto', api_key=token) if token else None
+          for i,ch in enumerate(chapters,1):
+              local=root/'images'/f'{i:02d}.jpg'
+              out=pathlib.Path('build/images')/f'{i:02d}.jpg'
+              if local.exists():
+                  Image.open(local).convert('RGB').save(out,quality=94)
+                  continue
+              if not client:
+                  raise RuntimeError('HF_Token is required when a chapter image is missing')
+              base=prompts[i-1] if i-1 < len(prompts) else req.get('visual_style','cinematic Abbasid Baghdad historical documentary')
+              prompt=(base + ', horizontal 16:9 cinematic historical documentary frame, warm lamplight, historically plausible Abbasid Baghdad, atmospheric depth, refined painterly photorealism, no text, no letters, no numbers, no logos, no watermark')
+              image=client.text_to_image(prompt,model='black-forest-labs/FLUX.1-schnell',width=1024,height=576,num_inference_steps=4)
+              image.convert('RGB').save(out,quality=94)
+          PY
+
+      - name: Build slow cinematic visuals synchronized to chapters
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/video
+          : > build/video/list.txt
+          n=0
+          for a in build/audio/[0-9][0-9].mp3; do
+            n=$((n+1)); id=$(printf '%02d' $n); img="build/images/$id.jpg"
+            dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$a")
+            frames=$(python3 -c "import math; print(math.ceil(float('$dur')*30))")
+            ffmpeg -hide_banner -loglevel error -y -loop 1 -i "$img" -t "$dur" \
+              -vf "scale=1600:-2,crop=1280:720,zoompan=z='min(zoom+0.00008,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=$frames:s=1280x720:fps=30,fade=t=in:st=0:d=1.5" \
+              -an -c:v libx264 -preset veryfast -crf 25 -pix_fmt yuv420p "build/video/$id.mp4"
+            printf "file '%s'\n" "$(realpath "build/video/$id.mp4")" >> build/video/list.txt
+          done
+          ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i build/video/list.txt -c copy build/visual.mp4
+
+      - name: Add approved V3 sleep ambience and master audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 build/narration.mp3)
+          OUTSTART=$(python3 -c "print(max(0,float('$DUR')-8))")
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i "sine=frequency=110:sample_rate=44100:duration=$DUR" \
+            -f lavfi -i "sine=frequency=146.83:sample_rate=44100:duration=$DUR" \
+            -f lavfi -i "sine=frequency=164.81:sample_rate=44100:duration=$DUR" \
+            -filter_complex "[0:a]volume=0.020[a0];[1:a]volume=0.013[a1];[2:a]volume=0.010[a2];[a0][a1][a2]amix=3,afade=t=in:st=0:d=6,afade=t=out:st=$OUTSTART:d=8[amb]" -map '[amb]' build/ambient.wav
+          ffmpeg -hide_banner -loglevel error -y -i build/narration.mp3 -i build/ambient.wav \
+            -filter_complex "[0:a]volume=1[voice];[1:a]volume=2.1,highpass=f=65,lowpass=f=5000[bg];[bg][voice]sidechaincompress=threshold=0.06:ratio=1.7:attack=40:release=800[duck];[voice][duck]amix=inputs=2:duration=first:weights='1 0.95':normalize=0,alimiter=limit=0.96[out]" \
+            -map '[out]' -c:a aac -b:a 160k build/final_audio.m4a
+
+      - name: Render final episode master
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg -hide_banner -loglevel error -y -i build/visual.mp4 -i build/final_audio.m4a \
+            -map 0:v:0 -map 1:a:0 -c:v copy -c:a copy -shortest -movflags +faststart "build/${EPISODE}_master.mp4"
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of json "build/${EPISODE}_master.mp4" | tee build/qc.json
+          python3 - <<'PY'
+          import json, os, subprocess
+          f=f"build/{os.environ['EPISODE']}_master.mp4"
+          d=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',f],text=True))
+          assert d>60, f'episode too short: {d}'
+          print('QC duration seconds:',d)
+          PY
+
+      - name: Upload master artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: saher-${{ env.EPISODE }}-${{ env.REQUEST_ID }}
+          path: |
+            build/${{ env.EPISODE }}_master.mp4
+            build/qc.json
+          retention-days: 14
+          compression-level: 0
+
+      - name: Notify Telegram success
+        if: success()
+        shell: bash
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          SIZE=$(stat -c%s "build/${EPISODE}_master.mp4")
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            if [ "$SIZE" -lt 48000000 ]; then
+              curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendVideo" -F "chat_id=${TELEGRAM_CHAT_ID}" -F "video=@build/${EPISODE}_master.mp4" -F "supports_streaming=true" -F "caption=✅ ساهر مع التاريخ — الحلقة جاهزة\n${URL}" >/dev/null
+            else
+              curl --fail --silent --show-error -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=✅ ساهر مع التاريخ — الحلقة جاهزة كـ GitHub Artifact: ${URL}" >/dev/null
+            fi
+          fi
+
+      - name: Mark request complete
+        if: success()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path('episodes')/os.environ['EPISODE']/'request.json'
+          d=json.loads(p.read_text(encoding='utf-8')); d['status']='done'; d['last_run_id']=os.environ['GITHUB_RUN_ID']
+          p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          git config user.name 'saher-history-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add "episodes/$EPISODE/request.json"
+          git commit -m "Mark $EPISODE request complete [skip ci]" || true
+          git push
+
+      - name: Notify Telegram failure
+        if: failure()
+        shell: bash
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            curl --silent -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=❌ ساهر مع التاريخ — فشل الإنتاج. سأحتاج مراجعة هذا التشغيل: ${URL}" >/dev/null || true
+          fi
