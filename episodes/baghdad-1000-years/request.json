@@ -1,12 +1,17 @@
 {
   "request_id": "baghdad-ep01-v1",
-  "status": "pending",
+  "status": "uploading_assets",
   "title": "كيف كان يومك لو استيقظت في بغداد قبل 1000 سنة؟ | قصة تاريخية هادئة للنوم",
   "target_minutes": 50,
   "voice": "ar-SA-HamedNeural",
   "rate": "-12%",
   "pitch": "-8Hz",
   "image_provider": "chatgpt_builtin_only",
+  "asset_pack": {
+    "version": 2,
+    "manifest": "images/assetpack_v2.manifest.json",
+    "expected_images": 8
+  },
   "visual_style": "warm cinematic Abbasid Baghdad around the 10th century, historically plausible daily life, Tigris river, courtyards, markets, bookshops, scholars, lamps, quiet sleep-history atmosphere",
   "visual_prompts": [
     "Baghdad before dawn, mud-brick and baked-brick homes around quiet courtyards, faint oil lamps, Tigris mist, Abbasid-era clothing",
