@@ -1,0 +1,25 @@
+{
+  "request_id": "baghdad-ep01-v1",
+  "status": "draft",
+  "title": "كيف كان يومك لو استيقظت في بغداد قبل 1000 سنة؟ | قصة تاريخية هادئة للنوم",
+  "target_minutes": 50,
+  "voice": "ar-SA-HamedNeural",
+  "rate": "-12%",
+  "pitch": "-8Hz",
+  "visual_style": "warm cinematic Abbasid Baghdad around the 10th century, historically plausible daily life, Tigris river, courtyards, markets, bookshops, scholars, lamps, quiet sleep-history atmosphere",
+  "visual_prompts": [
+    "Baghdad before dawn, mud-brick and baked-brick homes around quiet courtyards, faint oil lamps, Tigris mist, Abbasid-era clothing",
+    "narrow Baghdad lanes waking after dawn, bakers, water carriers, craftsmen opening workshops, calm daily life",
+    "large Abbasid market quarter with specialized trades, fabrics, spices, pottery and travelers, historically plausible busy bazaar",
+    "domestic life in Abbasid Baghdad, shaded courtyard, simple meal, water jar, family household atmosphere, bathhouse exterior in distance",
+    "booksellers and الوراقون in a Baghdad book market, paper, ink, manuscripts, scribes copying texts by hand",
+    "quiet scholarly gathering in Abbasid Baghdad, physicians, astronomers and translators discussing manuscripts, instruments and diagrams without visible writing",
+    "Tigris river traffic at golden afternoon, wooden boats carrying people and goods, canals and riverbank warehouses of medieval Baghdad",
+    "Baghdad at sunset and night, closing markets, warm oil lamps, silhouettes by the Tigris, tranquil reflective ending"
+  ],
+  "sources": [
+    "SOAS research on Abbasid social life and Baghdad markets",
+    "Cambridge histories of the Abbasid Caliphate and Baghdad",
+    "academic studies of Abbasid trade, river transport, markets and book culture"
+  ]
+}
